@@ -1,6 +1,6 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.2
+**Pietro Sala** — Version 0.3
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
@@ -35,19 +35,26 @@ One page on the loopback address, a mask over `pareto`: paste a process,
 choose the workers, the ablation and a time limit, and read the frontier with
 the strategy that attains every point. The switch "Expected time", on by
 default, is the `--time 1` of the command line: the frontier is then taken
-over the expected time and the impacts, the time first. The server is in the binary, so there
-is nothing to install beyond what is already there, it runs on the three
-desktop systems and inside a container alike, and it binds `127.0.0.1` and
-never every address, because it runs a computation for whoever asks.
+over the expected time and the impacts, the time first. The field "Max
+iterations", 3 by default, is the `--max-iter` of the command line, the
+passes a loop makes in one activation before its exit is forced; a point
+whose strategy met a forced exit shows under its expected values what the
+loops would still pay if they ran on, lower to upper per component, and the
+table carries the upper increments in a column "loops" of its own. The
+server is in the binary, so there is nothing to install beyond what is
+already there, it runs on the three desktop systems and inside a container
+alike, and it binds `127.0.0.1` and never every address, because it runs a
+computation for whoever asks.
 
 
 ## The model
 
-A process is a YAML file holding a binary tree. The leaves are **tasks**, each
-with a `duration` (how long it runs) and an `impact` (what it costs, a vector
-of non-negative numbers: money, energy, hours, anything, one entry per
-component; components are compared entry by entry and never added). The inner
-nodes compose their two children:
+A process is a YAML file holding a tree, binary but for its loop nodes. The
+leaves are **tasks**, each with a `duration` (how long it runs) and an
+`impact` (what it costs, a vector of non-negative numbers: money, energy,
+hours, anything, one entry per component; components are compared entry by
+entry and never added). The inner nodes compose their two children, a loop
+node its one child:
 
 | node | meaning |
 |---|---|
@@ -55,6 +62,7 @@ nodes compose their two children:
 | `parallel` | both children run at the same time |
 | `choice` | whoever runs the process picks one child |
 | `nature: p` | chance picks: `low` with probability `p`, `high` with `1 - p` |
+| `loop: p` | one child, `low`, runs and, once it is done, runs again with probability `p` or the loop is left with `1 - p` |
 
 The smallest example, `examples/tiny.yaml`, is one coin flip between two
 tasks:
@@ -85,7 +93,7 @@ Instances can be written directly, in a grammar smaller than the YAML:
 
 ```
 process ::= region ("," region)* | region op region
-region  ::= task | "(" process ")" | "@" saved ("[" shown "]")?
+region  ::= task | "(" process ")" | "(" prob process ")" | "@" saved ("[" shown "]")?
 op      ::= "||" | "^" | "^[" prob "]"
 task    ::= "(" name "," duration ")"
         |   "(" name "," duration "," "{" name ":" value "," ... "}" ")"
@@ -124,6 +132,83 @@ comment to the end of the line. The names are collected over the whole
 process in the order they first appear; the emitted file lists them as
 `impact_names`, and that order is the meaning of every `impact` vector and
 of every budget `--B` you pass.
+
+### Loops
+
+`(p R)`, a probability right after the parenthesis, where no task and no
+process can begin, is a **loop** over the process `R`: `R` runs and, once it
+is done, runs again with probability `p` or the loop is left with
+probability `1 - p`, with `p` in `(0, 1)`. `R` may be any process, a
+sequence included, without parentheses of its own:
+
+```
+(0.5 (A, 1, {euro: 10}) , (B, 2, {euro: 4}))      # a loop over a sequence
+( (Start, 1, {euro: 1}) || (0.1 (Retry, 2, {euro: 3})) )
+(0.3 ( (A, 1, {x: 1}) ^ (B, 2, {x: 2}) ))        # a choice inside the loop
+```
+
+In the tree the loop is the one unary node, kind `loop` in the YAML, with the
+region as its `low` child and no `high`; it carries `p` as a nature node
+carries its probability. A full binary tree has `2t - 1` nodes and every loop
+adds one; the identifiers stay in-order, the region first, then the loop
+node. The page draws a loop as an exclusive join, the region, an exclusive
+split and a back edge above the region, `p again` on the back edge and
+`1 - p out` under the split.
+
+The state of the semantics maps every node to a phase and a count, the count
+of a node being the number of times it was closed in the activation under way
+of the nearest loop above it (the whole run, with no loop above): the fast
+forward and the up clause increment the count of the node they close. Two
+clauses are added, both at a loop node `v` with region `R` and probability
+`p`. With `v` running and `R` idle, `R` starts, as the first region of a
+sequence starts. With `v` running and `R` done comes the draw, at the rank of
+a nature node: with `m` the count of `R`, the passes closed in this
+activation, the one just closed included, if `m < MAX_ITER` nature draws, `R`
+starts again with probability `p` and the loop is left with `1 - p`; if
+`m = MAX_ITER` the exit is forced, with probability 1. Leaving sets `v` done,
+`R` idle, and resets the counts of every node in the subtree of `v`, `v`
+included: the exit is the one closing that increments no count. The up clause
+never fires at a loop node, whose closing is its exit, and the cost and the
+time are paid as before, by the fast forward alone.
+
+`MAX_ITER` is the option `--max-iter K` of every command that reads an
+instance, the field "Max iterations" of the page, 3 by default. With it the
+MDP is finite: every loop makes at most `K` passes per activation, and an
+inner loop at most `K` passes per pass of the loop above it, so it may run
+more than `K` times over the whole run. `--max-iter inf` is the process with
+its loops unbounded, which has finitely many states up to the counts, reaches
+the final state with probability 1 and has a finite expected cost; the two
+bounds know it and `bound` accepts it, the search does not run it.
+
+The two estimates get one case at a loop node `v`, region `R`, probability
+`p`, for the upper and the lower bound alike and for every component, the
+time included, the passes running one after the other. With `R` idle,
+`X(v) = X̂(R) · (1 + g)`, where `X̂(R)` is the charge of `R` from its idle
+state and `g` the expected number of further passes; with `R` running,
+`X(v) = X_s(R) + g · X̂(R)`, the pass under way as the state charges it, then
+the further passes; with `R` done and the draw pending, `X(v) = g · X̂(R)`.
+Unbounded, `g = p / (1 - p)`; with `K` passes allowed and `m` closed in this
+activation, the one under way counted as closed, `g = p + ... + p^(K - m)`,
+and `g = p + ... + p^(K - 1)` from idle. Both bounds enclose the expected cost
+of every strategy of the process they are computed for, the unbounded one or
+the truncated one; the unbounded bounds hold for the truncated process from
+above, fewer passes costing less, and the truncated bounds are what the
+search uses. `sdcpi bound <instance> --max-iter K` prints the two bounds at
+the initial state, the exact optimum of every component and the worst breach
+of the enclosure over every reachable choice state, which must stay at zero.
+
+At a forced exit along a path `h` of probability `P(h)`, the unbounded
+process would still run `p / (1 - p)` passes in expectation, each worth a
+charge of `R`: the expected cost of the strategy in the unbounded process
+exceeds its cost in the truncated one by a vector in
+`P(h) · [L̂(R), Û(R)] · p / (1 - p)`, summed over the forced exits of the
+strategy. The engine accumulates this interval along every history and over
+every frontier and reports it per point, lower and upper; the page shows it
+under the expected values of a point, as "if the loops ran on past `K`
+passes", and the upper increments alone in the column "loops" of the table.
+For the time the lower end is taken as zero when the loop sits under a
+parallel node, the passes of one branch not lengthening the whole run for
+certain.
 
 `examples/line.cpi` is an eight-task manufacturing line in this grammar, and
 the whole flow is one pipe:
@@ -277,6 +362,7 @@ sdcpi optima  <instance>                     the exact least and greatest expect
 | `--print-size 1` | on `yes`, print how large the returned strategy is: its situations, how many stay undecided, how many decisions it prescribes |
 | `--print-strategy 1` | print the strategy itself; without this the decisions are not recorded, which is faster, and only the answer is reported |
 | `--time 1` | the expected time as the component zero of the cost, in front of the impacts, which keep their order; a budget by name calls it `time`. Every command that reads an instance takes it: `pareto` then takes the frontier over the time and the impacts, `bound` and `optima` report the time first, `to_prism` gives the model the reward `impact0`, paid `t_step` by every fast forward, and `to_objective` asks for it. The time is not one more impact: a task carries a zero there and the fast forward pays its advance once, so a parallel node lasts as long as the longer of its regions; its two bounds take the sum of the regions from above and the greater of the two lower bounds from below, and a task is bounded by what is left of its duration |
+| `--max-iter K` | the passes a loop makes in one activation before its exit is forced, 3 by default; an inner loop makes at most `K` per pass of the loop above it. Every command that reads an instance takes it, and `bound` alone takes `inf`, the process with its loops unbounded, whose two bounds are computed and whose search is refused; the page sends it as "Max iterations" |
 
 ## Output
 

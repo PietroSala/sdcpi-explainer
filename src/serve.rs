@@ -684,7 +684,10 @@ fn hello(bench: &Bench) -> String {
             "(name, duration, {impact: value, ...}) is a task, the map naming only the \
              impacts that are not zero; , is a sequence, || a parallel, ^ a choice of \
              the controller and ^[p] one of nature taking its left operand with \
-             probability p; brackets group. @saved refers to a process saved on this \
+             probability p; brackets group. (p R), a probability right after the \
+             parenthesis, is a loop over the process R: once R is done it runs again \
+             with probability p and the loop is left with 1 - p, the exit being forced \
+             after the max iterations. @saved refers to a process saved on this \
              page, spliced in place as a region, @\"a saved name\" one with spaces, and \
              @saved[shown] shows it under another name; a saved process may refer to \
              others, never to itself."

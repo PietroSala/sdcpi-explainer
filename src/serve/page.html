@@ -264,10 +264,22 @@
     </div>
   </div>
 
-  <label for="limit">Time limit, seconds</label>
-  <input id="limit" type="number" min="1" max="600" step="1" value="30">
+  <div class="row" style="margin-top:14px">
+    <div>
+      <label for="limit">Time limit, seconds</label>
+      <input id="limit" type="number" min="1" max="600" step="1" value="30">
+    </div>
+    <div>
+      <label for="maxiter">Max iterations</label>
+      <input id="maxiter" type="number" min="1" max="50" step="1" value="3">
+    </div>
+  </div>
   <div class="hint">A search cut at the limit returns the points it had found, which are
     candidates and not yet verified optima.</div>
+  <div class="hint">The iterations are the passes a loop makes in one activation before its
+    exit is forced, an inner loop making at most that many per pass of the loop above it.
+    A point whose strategy met a forced exit shows, under its expected values, what the
+    loops would still pay if they ran on.</div>
 
   <button id="go" type="submit">Compute the frontier</button>
 </form>
@@ -715,13 +727,17 @@ $('f').addEventListener('submit', async (e) => {
     ablation: $('ablation').value,
     limit: $('limit').value,
     time: $('time').checked ? '1' : '0',
+    max_iter: $('maxiter').value,
   });
+  // the bound on the passes as the server reads it, kept with the frontier
+  // so that the strategy panel can name it
+  const maxIter = maxIterSent();
   try {
     const r = await fetch('/api/frontier', { method: 'POST', body });
     const d = await r.json();
     if (d.error) { $('out').innerHTML = '<div class="err"></div>';
                    $('out').firstChild.textContent = d.error; }
-    else { LAST = d; render(d); }
+    else { d.max_iter = maxIter; LAST = d; render(d); }
   } catch (err) {
     $('out').innerHTML = '<div class="err"></div>';
     $('out').firstChild.textContent = String(err);
@@ -743,11 +759,16 @@ function render(d) {
   </div>`;
   const names = d_names(d), order = d_order(d);
   const cut = d.points.some(p => p.certified === false);
+  // the column of the loops is there when some point met a forced exit: the
+  // upper increments, compact, the two ends of every component in the tooltip
+  const loops = d.points.some(p => p.continued);
   const head = '<tr><th>#</th>' + order.map(j => `<th>${h(names[j])}</th>`).join('')
+             + (loops ? '<th>loops</th>' : '')
              + '<th>decisions</th>' + (cut ? '<th>final</th>' : '') + '</tr>';
   const rows = d.points.map((p, i) =>
     `<tr data-i="${i}" class="${p.certified === false ? 'prov' : ''}"><td>${i + 1}</td>`
     + order.map(j => `<td>${p.approx[j]}</td>`).join('')
+    + (loops ? `<td title="${h(continuedText(d, p))}">${h(continuedCompact(d, p))}</td>` : '')
     + `<td>${p.steps.length}</td>`
     + (cut ? `<td>${p.certified === false ? 'provisional' : 'yes'}</td>` : '') + `</tr>`).join('');
   // two impacts are a staircase in the plane; three or more are parallel
@@ -942,6 +963,27 @@ const d_order = (d) => {
 const h = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let SELECTED = null;
 
+// The bound on the passes of a loop as the server reads the field: a whole
+// number clamped between 1 and 50, and the default 3 for anything else.
+function maxIterSent() {
+  const v = $('maxiter').value;
+  return /^\d+$/.test(v) ? Math.min(50, Math.max(1, +v)) : 3;
+}
+// What the loops of a point would still pay if they ran on past the bound on
+// their passes, when its strategy met a forced exit: per component, in the
+// order of the table, the lower and the upper increment; nothing otherwise.
+const num = (v) => String(+v);
+function continuedParts(d, p) {
+  if (!p.continued) return [];
+  const names = d_names(d);
+  return d_order(d).map(j => ({ name: names[j], low: num(p.continued.low[j]), up: num(p.continued.up[j]) }));
+}
+// the compact form of the table, the upper increments alone, and the full
+// one, every component with its two ends, one value when they agree
+const continuedCompact = (d, p) => continuedParts(d, p).map(c => `+${c.up}`).join(', ');
+const continuedText = (d, p) => continuedParts(d, p)
+  .map(c => `${c.name} + ${c.low === c.up ? c.up : c.low + ' to + ' + c.up}`).join('; ');
+
 // A node in a sentence: its name, or with the detailed regions on, the
 // identifier that the drawing shows, "Mend(5)" for a task and the bare
 // identifier for a region, which is what tells two tasks of one name apart.
@@ -999,8 +1041,18 @@ function select(i, reveal = true) {
     const dec = v.includes('/') ? ` (${String(+p.approx[j])})` : '';
     return `<span style="margin-right:14px">${h(names[j])} <code>${v}</code>${dec}</span>`;
   }).join('');
+  // what the loops would still pay past the bound on their passes, when the
+  // strategy met a forced exit: per component, the lower and the upper increment
+  const K = LAST.max_iter;
+  const cont = p.continued
+    ? `<div style="margin-bottom:7px">if the loops ran on past ${K} ${K === 1 ? 'pass' : 'passes'}: `
+      + continuedParts(LAST, p).map(c => `<span style="margin-right:14px">${h(c.name)} `
+          + (c.low === c.up ? `<code>+ ${c.up}</code>` : `<code>+ ${c.low}</code> to <code>+ ${c.up}</code>`)
+          + `</span>`).join('')
+      + `</div>`
+    : '';
   $('str').innerHTML = `<h3>Strategy of point ${i + 1}</h3>`
-    + `<div style="margin-bottom:7px">expected: ${values}</div>` + lines;
+    + `<div style="margin-bottom:7px">expected: ${values}</div>` + cont + lines;
 }
 
 // Parallel coordinates: one vertical axis per impact, scaled from the least
