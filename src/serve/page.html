@@ -143,6 +143,7 @@
   #wbox .rhead button { width: auto; margin: 0; padding: 3px 9px; font-size: 12px; background: #fff;
                         color: var(--ink); border: 1px solid var(--line); border-radius: 4px; }
   #wbox .range { margin: 4px 0 8px; font-size: 12.5px; }
+  input:disabled { color: var(--muted); background: #f1f0ec; }
   .rng.red .fill { background: #d0342c; }
   .rng.red .thumb { border-color: #d0342c; }
   .rng.red .thumb:focus { outline-color: #f3c9c2; }
@@ -293,7 +294,7 @@
     </div>
     <div>
       <label for="maxiter">Max iterations</label>
-      <input id="maxiter" type="number" min="1" max="50" step="1" value="3">
+      <input id="maxiter" type="number" min="1" max="50" step="1" value="3" disabled title="the process has no loop">
     </div>
   </div>
   <div class="hint">A search cut at the limit returns the points it had found, which are
@@ -1020,6 +1021,11 @@ function refreshBounds() {
       const r = await fetch('/api/bounds', { method: 'POST', body });
       const d = await r.json();
       if (d.names) buildWindow(d); else $('wbox').hidden = true;
+      // the bound on the passes means nothing without a loop
+      if (d.loops !== undefined) {
+        $('maxiter').disabled = d.loops === 0;
+        $('maxiter').title = d.loops === 0 ? 'the process has no loop' : '';
+      }
     } catch (e) { /* the server is away */ }
   }, 250);
 }

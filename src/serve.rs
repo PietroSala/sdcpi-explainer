@@ -946,8 +946,9 @@ fn bounds_of(body: &str, bench: &Bench) -> String {
         format!("[{}]", parts.join(", "))
     };
     format!(
-        "{{\"time\": {}, \"names\": [{}], \"lower\": {}, \"upper\": {}, \"lower_exact\": {}, \"upper_exact\": {}}}",
+        "{{\"time\": {}, \"loops\": {}, \"names\": [{}], \"lower\": {}, \"upper\": {}, \"lower_exact\": {}, \"upper_exact\": {}}}",
         time,
+        tree.loops().len(),
         names.join(", "),
         side(&b.lower),
         side(&b.upper),
