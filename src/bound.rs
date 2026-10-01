@@ -46,7 +46,7 @@ pub struct Bounds<N: Num> {
 pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
     let k = tree.k;
     let mut stack: Vec<N> = Vec::with_capacity(8 * k);
-    rec(tree, s, tree.root, &mut stack);
+    rec(tree, s, tree.root, &mut stack, tree.max_iter);
     debug_assert_eq!(stack.len(), 2 * k);
     let lower = stack.split_off(k);
     Bounds {
@@ -56,24 +56,27 @@ pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
 }
 
 /// `U` and `L` of the region of the loop `v` from its idle state, the
-/// charge of one pass: `2k` values, `U` then `L`.
-fn pass<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
+/// charge of one pass: `2k` values, `U` then `L`, the loops inside the
+/// region bounded by `max_iter`, or unbounded with `None`.
+fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>) -> Vec<N> {
     let idle = vec![IDLE; tree.nodes.len()];
     let mut st: Vec<N> = Vec::with_capacity(2 * tree.k);
-    rec(tree, &idle, tree.node(v).low, &mut st);
+    rec(tree, &idle, tree.node(v).low, &mut st, max_iter);
     st
 }
 
 /// What the unbounded process would still pay at a forced exit of the loop
 /// `v`: `2k` values, the lower bounds then the upper ones, of the passes
 /// the loop is denied, `p / (1 - p)` passes each worth a charge of the
-/// region. The lower bound of the time is zero under a parallel node, the
-/// passes of a branch not lengthening the whole run for certain.
+/// region in the unbounded process, the loops inside the region unbounded
+/// too, since the passes denied run there. The lower bound of the time is
+/// zero under a parallel node, the passes of a branch not lengthening the
+/// whole run for certain.
 pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
     let k = tree.k;
     let p = N::prob_of(tree, v);
     let g = N::geometric(&p, None);
-    let one = pass::<N>(tree, v);
+    let one = pass::<N>(tree, v, None);
     let mut out: Vec<N> = Vec::with_capacity(2 * k);
     for c in 0..k {
         out.push(one[k + c].scale(&g));
@@ -92,7 +95,7 @@ pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
 /// The scratch stack keeps the recursion free of allocation: a combinator reads
 /// the `4k` values its two children left and folds them into the `2k` values it
 /// returns.
-fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
+fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32>) {
     let k = t.k;
 
     // s(v) = -2: the node is done and nothing is left to pay.
@@ -125,10 +128,10 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
         // restoring it.
         Kind::Sequence => {
             if s[n.high as usize] != IDLE {
-                rec(t, s, n.high, st);
+                rec(t, s, n.high, st, max_iter);
             } else {
-                rec(t, s, n.low, st);
-                rec(t, s, n.high, st);
+                rec(t, s, n.low, st, max_iter);
+                rec(t, s, n.high, st, max_iter);
                 fold_sum(st, k);
             }
         }
@@ -138,8 +141,8 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
         // longer of the two, bounded by their sum from above and by the
         // greater of the two lower bounds from below.
         Kind::Parallel => {
-            rec(t, s, n.low, st);
-            rec(t, s, n.high, st);
+            rec(t, s, n.low, st, max_iter);
+            rec(t, s, n.high, st, max_iter);
             fold_parallel(st, k, t.time);
         }
 
@@ -161,17 +164,17 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
                     count + 1
                 }
                 x if x >= 0 => {
-                    rec(t, s, r, st);
+                    rec(t, s, r, st, max_iter);
                     count + 1
                 }
                 _ => {
-                    rec(t, s, r, st);
+                    rec(t, s, r, st, max_iter);
                     1
                 }
             };
-            let further = t.max_iter.map(|m| m.saturating_sub(closed));
+            let further = max_iter.map(|m| m.saturating_sub(closed));
             let g = N::geometric(&p, further);
-            let one = pass::<N>(t, v);
+            let one = pass::<N>(t, v, max_iter);
             let base = st.len() - 2 * k;
             for j in 0..2 * k {
                 st[base + j] = st[base + j].add(&one[j].scale(&g));
@@ -184,12 +187,12 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
             if lo >= 0 {
                 // The branch has been taken already, and it is the only one that
                 // is not idle, by the branch invariant.
-                rec(t, s, n.low, st);
+                rec(t, s, n.low, st, max_iter);
             } else if hi >= 0 {
-                rec(t, s, n.high, st);
+                rec(t, s, n.high, st, max_iter);
             } else if lo == IDLE && hi == IDLE {
-                rec(t, s, n.low, st);
-                rec(t, s, n.high, st);
+                rec(t, s, n.low, st, max_iter);
+                rec(t, s, n.high, st, max_iter);
                 if n.kind == Kind::Choice {
                     fold_choice(st, k);
                 } else {

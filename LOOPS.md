@@ -83,9 +83,10 @@ truncated one. The unbounded bounds hold for the truncated process from above
 
 At a forced exit along a path `h` of probability `P(h)`, the unbounded
 process would still run `p / (1 - p)` passes in expectation, each worth a
-charge of `R`: the expected cost of the strategy in the unbounded process
-exceeds its cost in the truncated one by a vector in
-`P(h) · [L̂(R), Û(R)] · p / (1 - p)`, summed over the forced exits of the
+charge of `R` **in the unbounded process**, the loops inside `R` unbounded
+too, since the passes denied run there: the expected cost of the strategy in
+the unbounded process exceeds its cost in the truncated one by a vector in
+`P(h) · [L̂∞(R), Û∞(R)] · p / (1 - p)`, summed over the forced exits of the
 strategy. The engine accumulates this interval along every history (`gap`,
 `g_hat` scaled by the probability) and over every frontier, and reports it
 per point as `continued`, lower and upper. For the time the lower bound is
