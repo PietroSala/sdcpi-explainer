@@ -49,6 +49,28 @@ passes, each worth the charge of the region in the unbounded process, the
 loops inside the region unbounded too, scaled by the probability of the
 path; the lower bound of the time is zero under a parallel node.
 
+With `--directions N` the directions of the frontier are checked too, for
+every instance and every `K` in `--k`: `N` subsets of the components to
+maximize, drawn from the name of the instance and `K`, the subset holding
+the time alone always among them and the subset of every impact when
+`N >= 2`, plus the empty subset, which checks the oracle of this file
+against the engine with no direction given. For every subset
+`sdcpi pareto F --onephase 1 --max-iter K --time 1 --maximize NAMES`
+reports `complete` and names the subset back (`dir-status`); the set of
+its points, read back into the orientation of the engine, where a
+maximized component is negated, is the exact frontier of this file
+(`dir-frontier`): the Pareto-minimal expected cost vectors over every
+deterministic strategy of the truncated process, by backward induction
+over the same graph of states as the exact pass, the negation applied to
+every cost before it is summed; every point lies in the shown box of the
+two bounds (`dir-box`); no point is dominated by another in the directed
+sense (`dir-antichain`); the shown bounds are the recursion of LOOPS.md,
+which negation leaves as it is once the sign is turned back
+(`dir-bounds`); on an instance without choices the `continued` of the one
+point is the expected gap of the forced exits (`dir-continued`). An
+oracle whose sets pass `--set-cap` vectors, or whose states pass `--cap`,
+skips the instance for that subset.
+
 One reading of LOOPS.md is settled here: the exit of a loop resets the
 counts of the nodes below it and counts as a closing of the loop node for
 the loop above, so that a loop whose region is a loop is bounded too; the
@@ -65,6 +87,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -462,6 +485,141 @@ def exact_pass(t: Tree, K: int, charges, cap: int):
     return lo, hi, (gap if keep_gap else None), len(seen)
 
 
+class TooManyVectors(Exception):
+    pass
+
+
+def reachable_dag(t: Tree, K: int, charges, cap: int):
+    """The reachable states from the initial one, in an order where every
+    state follows its successors, with the expansion of every state."""
+    start = initial(t)
+    expansions = {}
+
+    def succs(state):
+        exp = expand(t, state, K, charges)
+        expansions[state] = exp
+        if exp[0] == "final":
+            return []
+        if exp[0] == "choice":
+            return list(exp[2])
+        return [item[3] for item in exp[1]]
+
+    frames = [(start, iter(succs(start)))]
+    seen = {start}
+    post = []
+    while frames:
+        state, it = frames[-1]
+        nxt = next(it, None)
+        if nxt is None:
+            frames.pop()
+            post.append(state)
+        elif nxt not in seen:
+            seen.add(nxt)
+            if len(seen) > cap:
+                raise TooManyStates(len(seen))
+            frames.append((nxt, iter(succs(nxt))))
+    return start, post, expansions
+
+
+def pareto_min(vectors) -> list:
+    """The Pareto-minimal vectors among `vectors`, without repetition: `u`
+    dominates `v` when `u <= v` in every component and `u != v`. Sorted in
+    the lexicographic order, a vector that dominates another precedes it,
+    so one pass against the vectors kept so far suffices."""
+    kept = []
+    for v in sorted(set(vectors)):
+        dominated = False
+        for u in kept:
+            if all(a <= b for a, b in zip(u, v)):
+                dominated = True
+                break
+        if not dominated:
+            kept.append(v)
+    return kept
+
+
+def exact_frontier(t: Tree, K: int, charges, cap: int, maximized, set_cap: int = 4000):
+    """The Pareto-minimal expected cost vectors over every deterministic
+    strategy of the truncated process, from the initial state, in the
+    orientation of the engine: the components flagged in `maximized`
+    (one boolean per component, the time being component zero when the
+    tree has the time) are negated in every cost before it is summed, so
+    that maximizing them is minimizing the negation. Returns the frontier
+    as a list of tuples of Fractions and the number of states.
+
+    Why this is exact. A deterministic strategy chooses, at every choice
+    state, one of the two successors, and may choose differently along
+    different histories reaching the same state. The set `Ach(s)` of the
+    expected cost vectors achievable from the state `s` does not depend on
+    the history that reached `s`: the truncated process from `s` is
+    determined by `s`, which carries the phase and the count of every node,
+    and the continuation of a strategy from `s` along one history is itself
+    a strategy from `s`. So `Ach` is defined on the states alone, and over
+    the graph of reachable states, finite and acyclic by the bound on the
+    passes, it satisfies: at the final state `Ach = {0}`; at a choice state
+    `Ach = Ach(low) | Ach(high)`, one successor being taken and every
+    continuation from it being allowed; at a move state with successors
+    `s_i` of probability `p_i` and cost `c_i`, `Ach = {sum_i p_i (c_i + v_i)
+    : v_i in Ach(s_i)}`, every combination being realized by one strategy,
+    since the histories through distinct successors are distinct, even
+    when two successors are the same state, and a history-dependent
+    strategy continues each on its own. The frontier is the set of
+    Pareto-minimal elements of `Ach(s0)`. Reducing at every state is sound:
+    the minimal elements of a union are among the minimal elements of its
+    parts, and a positive weighted sum preserves dominance, so a dominated
+    `v_i` yields a dominated sum and the minimal elements of the weighted
+    Minkowski sum are among the sums of minimal elements. Every set is
+    kept reduced, after every union and after every successor is folded
+    into the sum, which is again sound since the fold is a sum.
+    """
+    k = t.k
+    sign = [Fraction(-1) if m else Fraction(1) for m in maximized]
+    start, post, expansions = reachable_dag(t, K, charges, cap)
+    zero = (Fraction(0),) * k
+    value = {}
+    for state in post:
+        exp = expansions[state]
+        if exp[0] == "final":
+            value[state] = [zero]
+            continue
+        if exp[0] == "choice":
+            value[state] = pareto_min(value[exp[2][0]] + value[exp[2][1]])
+        else:
+            acc = [zero]
+            for prob, cost, _, nxt in exp[1]:
+                nxt_set = value[nxt]
+                if len(acc) * len(nxt_set) > 1_000_000:
+                    raise TooManyVectors(len(acc) * len(nxt_set))
+                step = tuple(sign[c] * cost[c] for c in range(k))
+                shifted = [tuple(prob * (step[c] + v[c]) for c in range(k)) for v in nxt_set]
+                acc = pareto_min([tuple(a[c] + w[c] for c in range(k)) for a in acc for w in shifted])
+            value[state] = acc
+        if len(value[state]) > set_cap:
+            raise TooManyVectors(len(value[state]))
+    return value[start], len(post)
+
+
+def direction_subsets(k: int, n: int, rng: random.Random) -> list:
+    """`n` distinct non-empty subsets of the `k` components, as lists of
+    booleans, the time (component zero) alone first, every impact next
+    when `n >= 2`, random ones after."""
+    out = []
+    time_alone = [c == 0 for c in range(k)]
+    out.append(time_alone)
+    all_impacts = [c != 0 for c in range(k)]
+    if n >= 2 and all_impacts not in out and any(all_impacts):
+        out.append(all_impacts)
+    total = (1 << k) - 1
+    tries = 0
+    while len(out) < n and len(out) < total and tries < 100 * n:
+        tries += 1
+        mask = rng.randint(1, total)
+        sub = [bool(mask >> c & 1) for c in range(k)]
+        if sub not in out:
+            out.append(sub)
+    return out[:n]
+
+
 # ---------------------------------------------------------------------------
 # the two bounds of LOOPS.md, from a state
 # ---------------------------------------------------------------------------
@@ -787,6 +945,9 @@ def _check_instance(name: str, text: str, cfg: dict, rep: Report):
             rep.skip("optima", f"K={K}: the exact pass passed {cap} states ({e})")
         my_u, my_l = bounds_at_start(timed, K)
 
+        if cfg.get("directions") is not None:
+            direction_checks(name, cfg, rep, timed, yaml, K, mine, my_u, my_l, charges, choice_free)
+
         for with_time in (False, True):
             args = ["bound", str(yaml), "--max-iter", str(K)] + (["--time", "1"] if with_time else [])
             r = run(sdcpi, args, timeout)
@@ -899,6 +1060,106 @@ def _check_instance(name: str, text: str, cfg: dict, rep: Report):
 
     if choice_free:
         gap_test(name, text, cfg, rep, plain, timed, yaml)
+
+
+def direction_checks(name, cfg, rep: Report, timed: Tree, yaml: Path, K: int, mine, my_u, my_l, charges, choice_free: bool):
+    """The frontier with directions against the exact frontier of this
+    file, for the empty subset and `cfg['directions']` subsets of the
+    components to maximize."""
+    sdcpi = cfg["sdcpi"]
+    work = Path(cfg["work"])
+    timeout = cfg["timeout"]
+    cap = cfg["cap"]
+    set_cap = cfg["set_cap"]
+    k = timed.k
+    rng = random.Random(f"{cfg.get('seed', 0)}:{name}:{K}")
+    subsets = [[False] * k] + direction_subsets(k, cfg["directions"], rng)
+    for maximized in subsets:
+        names = [timed.names[c] for c in range(k) if maximized[c]]
+        label = ",".join(names) if names else "none"
+        tag = f"K={K} maximize {label}"
+        # the oracle, in the orientation of the engine
+        oracle = None
+        try:
+            oracle, states = exact_frontier(timed, K, charges, cap, maximized, set_cap)
+            rep.notes.append(f"{tag}: the exact frontier has {len(oracle)} points over {states} states")
+        except TooManyStates as e:
+            rep.skip("dir-frontier", f"{tag}: the oracle passed {cap} states ({e})")
+        except TooManyVectors as e:
+            rep.skip("dir-frontier", f"{tag}: a set of the oracle passed {set_cap} vectors ({e})")
+        # the engine
+        suffix = "-max-" + ("-".join(names) if names else "none")
+        out = work / f"{name}-K{K}{suffix}.json"
+        args = ["pareto", str(yaml), "--onephase", "1", "--max-iter", str(K), "--time", "1", "--json", str(out)]
+        if names:
+            args += ["--maximize", ",".join(names)]
+        r = run(sdcpi, args, timeout)
+        rep.runs += 1
+        rep.count("dir-status")
+        if r.timed_out:
+            rep.skip("dir-status", f"{tag}: pareto timed out after {timeout}s")
+            continue
+        if r.rc != 0:
+            rep.fail("dir-status", f"{tag}: pareto exit {r.rc}: {r.err.strip()}")
+            continue
+        try:
+            j = json.loads(out.read_text())
+        except Exception as e:
+            rep.fail("dir-status", f"{tag}: the JSON does not read: {e}")
+            continue
+        if j.get("status") != "complete":
+            rep.fail("dir-status", f"{tag}: status {j.get('status')!r} {j.get('reason', '')}")
+            continue
+        if list(j.get("maximized", [])) != names:
+            rep.fail("dir-status", f"{tag}: the JSON names {j.get('maximized')} as maximized")
+        ju = rationals(j["upper"])
+        jl = rationals(j["lower"])
+        points = j.get("points", [])
+        shown = [rationals(p["value"]) for p in points]
+        if not points:
+            rep.fail("dir-status", f"{tag}: the frontier is empty")
+            continue
+        # the shown bounds are the recursion, the sign turned back
+        rep.count("dir-bounds")
+        if ju != list(my_u) or jl != list(my_l):
+            rep.fail("dir-bounds", f"{tag}: frontier U {fmt(ju)} L {fmt(jl)}, mine U {fmt(my_u)} L {fmt(my_l)}")
+        # every point in the shown box
+        rep.count("dir-box")
+        for val in shown:
+            if any(val[c] < jl[c] or val[c] > ju[c] for c in range(k)):
+                rep.fail("dir-box", f"{tag}: the point {fmt(val)} leaves the box U {fmt(ju)} L {fmt(jl)}")
+                break
+        # no point dominated in the directed sense: plain dominance once
+        # the maximized components are negated
+        engine = [tuple(-val[c] if maximized[c] else val[c] for c in range(k)) for val in shown]
+        rep.count("dir-antichain")
+        if len(set(engine)) != len(engine):
+            rep.fail("dir-antichain", f"{tag}: a point of the frontier repeats")
+        elif len(pareto_min(engine)) != len(engine):
+            dominated = [v for v in engine if v not in pareto_min(engine)]
+            rep.fail("dir-antichain", f"{tag}: {len(dominated)} points are dominated, e.g. {fmt(dominated[0])} in the orientation of the engine")
+        # the set of points is the exact frontier
+        if oracle is not None:
+            rep.count("dir-frontier")
+            if set(engine) != set(oracle):
+                missing = sorted(set(oracle) - set(engine))
+                extra = sorted(set(engine) - set(oracle))
+                rep.fail(
+                    "dir-frontier",
+                    f"{tag}: the engine has {len(engine)} points, the oracle {len(oracle)} (orientation of the engine); "
+                    f"missing from the engine {[fmt(v) for v in missing]}, not in the oracle {[fmt(v) for v in extra]}",
+                )
+        # on an instance without choices, the gap of the one point
+        if choice_free and mine is not None:
+            rep.count("dir-continued")
+            if len(points) != 1:
+                rep.fail("dir-continued", f"{tag}: {len(points)} points on an instance without choices")
+            else:
+                _, _, gap = mine
+                cont = points[0].get("continued")
+                got = [Fraction(0)] * (2 * k) if cont is None else rationals(cont["low"]) + rationals(cont["up"])
+                if got != gap:
+                    rep.fail("dir-continued", f"{tag}: continued {fmt(got)}, the expected gap of the forced exits {fmt(gap)}")
 
 
 def gap_test(name, text, cfg, rep: Report, plain: Tree, timed: Tree, yaml: Path):
@@ -1105,6 +1366,9 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="the report as JSON (default work/report.json)")
     ap.add_argument("--limit", type=int, default=None, help="the first N instances alone")
     ap.add_argument("--verbose", action="store_true", help="print every instance as it completes")
+    ap.add_argument("--directions", type=int, default=None, help="check N subsets of maximized components per instance and K against the exact frontier")
+    ap.add_argument("--set-cap", type=int, default=4000, help="vectors a set of the exact frontier may hold")
+    ap.add_argument("--seed", type=int, default=0, help="the seed of the random subsets of --directions")
     args = ap.parse_args()
 
     sdcpi = args.sdcpi
@@ -1141,6 +1405,9 @@ def main() -> int:
         "gap_ks": span(args.gap_k),
         "timeout": args.timeout,
         "cap": args.cap,
+        "directions": args.directions,
+        "set_cap": args.set_cap,
+        "seed": args.seed,
     }
     print(f"{len(specs)} instances, K in {cfg['ks']}, gap K in {cfg['gap_ks']}, {args.jobs} jobs, binary {sdcpi}")
     started = time.time()
