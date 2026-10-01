@@ -22,9 +22,28 @@
 //! about a single component, where a memoryless policy is already optimal;
 //! neither encoding replaces the other.
 //!
+//! With loops the model follows LOOPS.md and the engine of `state.rs`
+//! clause by clause. A loop node carries its phase as every node does and
+//! one bounded integer beside it, `c_v : [0..max_iter]`, the passes of its
+//! region closed in the activation under way, the constant `max_iter`
+//! being `MAX_ITER` of the instance. The down clause at a loop, rank 2,
+//! starts the region as the first region of a sequence starts; the draw,
+//! at the rank of a nature node, fires when the region is done: with
+//! `m = c_v + 1` the passes closed, below `max_iter` the region starts
+//! again with probability `p` and the count takes `m`, and the loop is
+//! left with `1 - p`; at `max_iter` the exit is forced. Leaving sets the
+//! loop done, the region idle and the count back to zero, and the up
+//! clause never fires at a loop node. The model is the truncated process
+//! the engine runs with `--max-iter`, and `MAX_ITER = inf` is refused: a
+//! PRISM variable is bounded, and the unbounded process lives in the
+//! bounds alone.
+//!
 //! The emitted text matches scripts/to_prism.py line for line at scale 1,
 //! apart from the one header line naming the generator, so the two
-//! encoders can be checked against one another with a byte comparison.
+//! encoders can be checked against one another with a byte comparison. A
+//! process with loops has no text in that script, and every line the
+//! loops add is emitted only when the instance has one, so the comparison
+//! stands on the instances the script knows.
 
 use crate::tree::{Kind, Tree};
 
@@ -86,14 +105,18 @@ fn format_g(x: f64, sig: usize) -> String {
 
 /// A static upper bound on the progress a node can reach while running: a
 /// task its duration, a sequence the sum of its two regions, a parallel or
-/// an XOR node the larger of the two branches.
-fn compute_bounds(tree: &Tree, id: u32, max_time: &mut Vec<i64>) -> i64 {
+/// an XOR node the larger of the two branches, a loop `max_iter` times its
+/// region, the passes of one activation running one after the other and
+/// the moves between them taking no time.
+fn compute_bounds(tree: &Tree, id: u32, max_iter: i64, max_time: &mut Vec<i64>) -> i64 {
     let n = tree.node(id);
     let b = if n.kind == Kind::Task {
         n.duration as i64
+    } else if n.kind == Kind::Loop {
+        max_iter * compute_bounds(tree, n.low, max_iter, max_time)
     } else {
-        let low = compute_bounds(tree, n.low, max_time);
-        let high = compute_bounds(tree, n.high, max_time);
+        let low = compute_bounds(tree, n.low, max_iter, max_time);
+        let high = compute_bounds(tree, n.high, max_iter, max_time);
         if n.kind == Kind::Sequence {
             low + high
         } else {
@@ -118,31 +141,29 @@ fn trigger(tree: &Tree, id: u32, i: usize) -> Option<String> {
             }
             Some(format!("{v}>=0 & n{}=-1 & n{}=-1", n.low, n.high))
         }
-        // down: parallel or sequence, running, both children idle
-        2 => {
-            if !matches!(n.kind, Kind::Sequence | Kind::Parallel) {
-                return None;
+        // down: parallel or sequence, running, both children idle; a loop,
+        // running, its region idle
+        2 => match n.kind {
+            Kind::Sequence | Kind::Parallel => {
+                Some(format!("{v}>=0 & n{}=-1 & n{}=-1", n.low, n.high))
             }
-            Some(format!("{v}>=0 & n{}=-1 & n{}=-1", n.low, n.high))
-        }
-        // up: some child done at a sequence or an XOR, both at a parallel
-        3 => {
-            if n.kind == Kind::Task {
-                return None;
-            }
-            if n.kind == Kind::Parallel {
-                Some(format!("n{}=-2 & n{}=-2", n.low, n.high))
-            } else {
-                Some(format!("n{}=-2 | n{}=-2", n.low, n.high))
-            }
-        }
-        // nature: XOR inside Dom(P), running, both children idle
-        4 => {
-            if n.kind != Kind::Nature {
-                return None;
-            }
-            Some(format!("{v}>=0 & n{}=-1 & n{}=-1", n.low, n.high))
-        }
+            Kind::Loop => Some(format!("{v}>=0 & n{}=-1", n.low)),
+            _ => None,
+        },
+        // up: some child done at a sequence or an XOR, both at a parallel;
+        // never at a loop, whose closing is its exit, nor at a task
+        3 => match n.kind {
+            Kind::Task | Kind::Loop => None,
+            Kind::Parallel => Some(format!("n{}=-2 & n{}=-2", n.low, n.high)),
+            _ => Some(format!("n{}=-2 | n{}=-2", n.low, n.high)),
+        },
+        // nature: XOR inside Dom(P), running, both children idle; the draw
+        // of a loop, running, its region done, at the same rank
+        4 => match n.kind {
+            Kind::Nature => Some(format!("{v}>=0 & n{}=-1 & n{}=-1", n.low, n.high)),
+            Kind::Loop => Some(format!("{v}>=0 & n{}=-2", n.low)),
+            _ => None,
+        },
         // fast forward: a task under way; v < D(v) is implied by the range
         // of the variable and emitted all the same, so that the guard reads
         // as the definition writes it
@@ -167,12 +188,27 @@ fn label_of(tree: &Tree, id: u32) -> String {
     }
 }
 
-pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
+/// The text of the model, or the reason there is none: a process with loops
+/// needs the bound on their passes, `MAX_ITER`, which `--max-iter inf`
+/// removes, and a PRISM variable cannot count without a bound.
+pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> Result<String, String> {
     let nodes: Vec<u32> = (1..=tree.n_nodes).collect();
     let tasks: Vec<u32> = tree.tasks.clone();
+    let loops: Vec<u32> = tree.loops();
     let dimension = tree.k;
+    let max_iter: i64 = match tree.max_iter {
+        Some(m) => m as i64,
+        None if loops.is_empty() => 1,
+        None => {
+            return Err(
+                "the PRISM model of a process with loops needs a bound on their passes: \
+                 a count is a bounded variable there, and --max-iter inf leaves it none"
+                    .to_string(),
+            )
+        }
+    };
     let mut max_time = vec![0i64; tree.n_nodes as usize + 1];
-    compute_bounds(tree, tree.root, &mut max_time);
+    compute_bounds(tree, tree.root, max_iter, &mut max_time);
     let holders: Vec<Vec<u32>> = (1..=5)
         .map(|i| {
             nodes
@@ -208,6 +244,10 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
     }
     w(format!("//   tasks: {}", tree.n_tasks));
     w(format!("//   nodes: {}", tree.n_nodes));
+    if !loops.is_empty() {
+        w(format!("//   loops: {}", loops.len()));
+        w(format!("//   max_iter: {max_iter}"));
+    }
     if grid {
         w(format!("//   max_duration: {}", m.max_duration));
         w(format!("//   xor_root_kind: {}", m.xor_root_kind));
@@ -235,6 +275,18 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
     w(ws("//"));
     w(ws("// The encoding follows the single-step semantics clause by clause."));
     w(ws("// Comments below mark the places where it departs from a literal reading."));
+    if !loops.is_empty() {
+        w(ws("//"));
+        w(ws("// LOOPS"));
+        w(ws("//   A loop node holds its phase as every node does and a count beside it, the"));
+        w(ws("//   passes of its region closed in the activation under way, bounded by the"));
+        w(ws("//   constant max_iter. The down clause at a loop starts its region; the draw,"));
+        w(ws("//   at the rank of a nature node, fires when the region is done and runs it"));
+        w(ws("//   again with the probability of the loop while the count is below the bound,"));
+        w(ws("//   the exit being forced at the bound; the up clause never closes a loop."));
+        w(ws("//   The model is the truncated process the engine runs with --max-iter: the"));
+        w(ws("//   unbounded process has no bounded count and lives in the bounds alone."));
+    }
     w(ws(""));
     w(ws("mdp"));
     w(ws(""));
@@ -274,6 +326,18 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
         w(ws("// ---------------------------------------------------------------------------"));
         for &n in &natures {
             w(format!("const double p{n} = {};", dbl(tree.node(n).prob)));
+        }
+    }
+    if !loops.is_empty() {
+        w(ws(""));
+        w(ws("// ---------------------------------------------------------------------------"));
+        w(ws("// the loops: the bound on the passes of a region in one activation, MAX_ITER,"));
+        w(ws("// and the probability of each loop, the one of running its region again once"));
+        w(ws("// it is done"));
+        w(ws("// ---------------------------------------------------------------------------"));
+        w(format!("const int max_iter = {max_iter};"));
+        for &v in &loops {
+            w(format!("const double p{v} = {};", dbl(tree.node(v).prob)));
         }
     }
     w(ws(""));
@@ -395,6 +459,12 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
     w(ws("// be running: a task stops one below its duration, as well formedness demands,"));
     w(ws("// a sequence adds the bounds of its two regions, and a parallel or an XOR node"));
     w(ws("// takes the larger of the two branches."));
+    if !loops.is_empty() {
+        w(ws("// A loop node takes max_iter times the bound of its region, the passes of one"));
+        w(ws("// activation running one after the other, and carries its count beside its"));
+        w(ws("// phase: the passes of the region closed in the activation under way, raised"));
+        w(ws("// by the draw that runs the region again and reset by the exit."));
+    }
     w(ws("// ---------------------------------------------------------------------------"));
     w(ws("module process"));
     w(ws(""));
@@ -410,6 +480,16 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
             label_of(tree, n)
         ));
     }
+    if !loops.is_empty() {
+        w(ws("  // the counts of the loops: the passes of the region closed in the"));
+        w(ws("  // activation under way, never max_iter, the exit being forced before"));
+        for &v in &loops {
+            w(format!(
+                "  c{v} : [0..max_iter] init 0;  // node {v}, {}",
+                label_of(tree, v)
+            ));
+        }
+    }
     w(ws(""));
 
     // The decision trail. The up clause returns the branches of a closed
@@ -422,6 +502,25 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
     // the branch it took, written once and never cleared; guards are
     // untouched, so the values and the probabilities do not move, and only
     // states that differ in a past decision stop being identified.
+    //
+    // With loops the trail stays as it is, and the decision is this. The
+    // draw of a loop needs no variable of its own: the branch it takes is
+    // in the state at once, the region restarted with the count raised or
+    // the node done, and the count is part of the state while the loop
+    // runs, so a decision inside the region can read the pass under way.
+    // What the state does not keep is the past of the loop. A choice or a
+    // nature node inside a region fires once per pass, so its trail
+    // variable is overwritten at every pass and records the branch of the
+    // latest pass alone; and the exit resets the count, so a decision
+    // downstream cannot read how many passes were made. A trail of the
+    // whole history would need one variable per pass and per activation
+    // for every node under a loop, finite with MAX_ITER and exponential in
+    // the nesting, and is not emitted. A positional pure scheduler of the
+    // model with loops therefore ranges over a subclass of the
+    // history-dependent policies of the instance, the ones reading the
+    // pass under way and not the passes gone by: the model checker may
+    // return a subset of the frontier, or points the frontier dominates,
+    // and never a point outside it.
     let trail: Vec<u32> = if history {
         nodes
             .iter()
@@ -473,13 +572,16 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
     if !holder(2).is_empty() {
         w(ws("  // ---- (down), r(s) = 2 --------------------------------------------------"));
         w(ws("  // tau starts the low child of a sequence and both children of a parallel."));
+        if !loops.is_empty() {
+            w(ws("  // At a loop it starts the region, as the first region of a sequence."));
+        }
         for &n in holder(2) {
             let g = format!("rank2 & wit2_{n}");
             let node = tree.node(n);
-            let upd = if node.kind == Kind::Sequence {
-                format!("(n{}'=0)", node.low)
-            } else {
+            let upd = if node.kind == Kind::Parallel {
                 format!("(n{}'=0) & (n{}'=0)", node.low, node.high)
+            } else {
+                format!("(n{}'=0)", node.low)
             };
             w(format!("  [down{n}] {g} -> {upd};  // {}", kind_str(node.kind)));
         }
@@ -520,13 +622,31 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
         w(ws(""));
     }
 
-    // (nature)
+    // (nature), and the draw of a loop at the same rank
     if !holder(4).is_empty() {
         w(ws("  // ---- (nature), r(s) = 4 ------------------------------------------------"));
         w(ws("  // one command with a probabilistic update, the low branch carrying p."));
+        if !loops.is_empty() {
+            w(ws("  // A loop whose region is done draws at this rank. With m = c + 1 the passes"));
+            w(ws("  // closed in the activation under way, the one just closed included: below"));
+            w(ws("  // max_iter the region starts again with probability p and the count takes"));
+            w(ws("  // m, and the loop is left with 1 - p; at max_iter the exit is forced, one"));
+            w(ws("  // command with a deterministic update, so that the two guards exclude one"));
+            w(ws("  // another. Leaving sets the loop done, the region idle and the count back"));
+            w(ws("  // to zero; the up clause never closes a loop."));
+        }
         for &n in holder(4) {
             let g = format!("rank4 & wit4_{n}");
             let node = tree.node(n);
+            if node.kind == Kind::Loop {
+                let leave = format!("(n{n}'=-2) & (n{}'=-1) & (c{n}'=0)", node.low);
+                w(format!(
+                    "  [loop{n}draw] {g} & c{n}+1<max_iter -> p{n} : (n{}'=0) & (c{n}'=c{n}+1) + (1-p{n}) : {leave};",
+                    node.low
+                ));
+                w(format!("  [loop{n}exit] {g} & c{n}+1>=max_iter -> {leave};"));
+                continue;
+            }
             w(format!(
                 "  [nature{n}] {g} -> p{n} : (n{}'=0){} + (1-p{n}) : (n{}'=0){};",
                 node.low,
@@ -607,5 +727,5 @@ pub fn emit(tree: &Tree, stem: &str, file_name: &str, history: bool) -> String {
         w(ws("endrewards"));
         w(ws(""));
     }
-    out.join("\n") + "\n"
+    Ok(out.join("\n") + "\n")
 }

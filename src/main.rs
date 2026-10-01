@@ -120,7 +120,9 @@ options for to_prism
                         of the instance; false emits the plain model, whose
                         states forget closed decisions, right for every
                         single-component query. The model is written to
-                        standard output, or to --out F
+                        standard output, or to --out F. A process with loops
+                        is encoded truncated at --max-iter K, one bounded
+                        count per loop; --max-iter inf is refused
 
 options for to_objective
   the budget of determine, --B or --B-file in either form, emitted as the
@@ -769,9 +771,6 @@ fn cmd_to_prism(args: &[String]) -> i32 {
         Ok(v) => v,
         Err(e) => return fail(&e),
     };
-    if !tree.loops().is_empty() {
-        return fail("the PRISM model of a process with loops is not written yet");
-    }
     let history = match args.flag("encode-history") {
         None | Some("true") => true,
         Some("false") => false,
@@ -785,7 +784,12 @@ fn cmd_to_prism(args: &[String]) -> i32 {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let text = to_prism::emit(&tree, &stem, &file_name, history);
+    // the one refusal: a process with loops and `--max-iter inf`, the
+    // model having no bounded variable to count the passes with
+    let text = match to_prism::emit(&tree, &stem, &file_name, history) {
+        Ok(t) => t,
+        Err(e) => return fail(&e),
+    };
     match args.flag("out") {
         Some(p) => match std::fs::write(p, &text) {
             Ok(()) => 0,
