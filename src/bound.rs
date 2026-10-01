@@ -53,7 +53,8 @@ pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
 pub fn bounds_with<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>) -> Bounds<N> {
     let k = tree.k;
     let mut stack: Vec<N> = Vec::with_capacity(8 * k);
-    rec(tree, s, tree.root, &mut stack, max_iter);
+    let mut cache: Vec<Option<Vec<N>>> = vec![None; tree.nodes.len()];
+    rec(tree, s, tree.root, &mut stack, max_iter, &mut cache);
     debug_assert_eq!(stack.len(), 2 * k);
     let lower = stack.split_off(k);
     Bounds {
@@ -65,10 +66,18 @@ pub fn bounds_with<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>) -> Boun
 /// `U` and `L` of the region of the loop `v` from its idle state, the
 /// charge of one pass: `2k` values, `U` then `L`, the loops inside the
 /// region bounded by `max_iter`, or unbounded with `None`.
-fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>) -> Vec<N> {
+/// The charge is computed once per loop node and kept in `cache` for the
+/// rest of the traversal: a loop inside a loop would otherwise be charged
+/// again at every level above it, and the recursion would grow with two to
+/// the depth of the nesting.
+fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>) -> Vec<N> {
+    if let Some(c) = &cache[v as usize] {
+        return c.clone();
+    }
     let idle = vec![IDLE; tree.nodes.len()];
     let mut st: Vec<N> = Vec::with_capacity(2 * tree.k);
-    rec(tree, &idle, tree.node(v).low, &mut st, max_iter);
+    rec(tree, &idle, tree.node(v).low, &mut st, max_iter, cache);
+    cache[v as usize] = Some(st.clone());
     st
 }
 
@@ -83,7 +92,8 @@ pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
     let k = tree.k;
     let p = N::prob_of(tree, v);
     let g = N::geometric(&p, None);
-    let one = pass::<N>(tree, v, None);
+    let mut cache: Vec<Option<Vec<N>>> = vec![None; tree.nodes.len()];
+    let one = pass::<N>(tree, v, None, &mut cache);
     let mut out: Vec<N> = Vec::with_capacity(2 * k);
     for c in 0..k {
         out.push(one[k + c].scale(&g));
@@ -108,7 +118,7 @@ pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
 /// The scratch stack keeps the recursion free of allocation: a combinator reads
 /// the `4k` values its two children left and folds them into the `2k` values it
 /// returns.
-fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32>) {
+fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>) {
     let k = t.k;
 
     // s(v) = -2: the node is done and nothing is left to pay.
@@ -144,10 +154,10 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
         // restoring it.
         Kind::Sequence => {
             if s[n.high as usize] != IDLE {
-                rec(t, s, n.high, st, max_iter);
+                rec(t, s, n.high, st, max_iter, cache);
             } else {
-                rec(t, s, n.low, st, max_iter);
-                rec(t, s, n.high, st, max_iter);
+                rec(t, s, n.low, st, max_iter, cache);
+                rec(t, s, n.high, st, max_iter, cache);
                 fold_sum(st, k);
             }
         }
@@ -157,8 +167,8 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
         // longer of the two, bounded by their sum from above and by the
         // greater of the two lower bounds from below.
         Kind::Parallel => {
-            rec(t, s, n.low, st, max_iter);
-            rec(t, s, n.high, st, max_iter);
+            rec(t, s, n.low, st, max_iter, cache);
+            rec(t, s, n.high, st, max_iter, cache);
             fold_parallel(st, k, t.time, t.time && t.maximized[0]);
         }
 
@@ -180,17 +190,17 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
                     count + 1
                 }
                 x if x >= 0 => {
-                    rec(t, s, r, st, max_iter);
+                    rec(t, s, r, st, max_iter, cache);
                     count + 1
                 }
                 _ => {
-                    rec(t, s, r, st, max_iter);
+                    rec(t, s, r, st, max_iter, cache);
                     1
                 }
             };
             let further = max_iter.map(|m| m.saturating_sub(closed));
             let g = N::geometric(&p, further);
-            let one = pass::<N>(t, v, max_iter);
+            let one = pass::<N>(t, v, max_iter, cache);
             let base = st.len() - 2 * k;
             for j in 0..2 * k {
                 st[base + j] = st[base + j].add(&one[j].scale(&g));
@@ -203,12 +213,12 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
             if lo >= 0 {
                 // The branch has been taken already, and it is the only one that
                 // is not idle, by the branch invariant.
-                rec(t, s, n.low, st, max_iter);
+                rec(t, s, n.low, st, max_iter, cache);
             } else if hi >= 0 {
-                rec(t, s, n.high, st, max_iter);
+                rec(t, s, n.high, st, max_iter, cache);
             } else if lo == IDLE && hi == IDLE {
-                rec(t, s, n.low, st, max_iter);
-                rec(t, s, n.high, st, max_iter);
+                rec(t, s, n.low, st, max_iter, cache);
+                rec(t, s, n.high, st, max_iter, cache);
                 if n.kind == Kind::Choice {
                     fold_choice(st, k);
                 } else {

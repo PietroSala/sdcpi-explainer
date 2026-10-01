@@ -324,8 +324,26 @@ more suites will arrive as the library evolves. The dispatcher knows
 only that contract, so the library stays free of what the suites
 measure, and the options of a suite are listed by its own `--help`.
 
-The suite included today confronts the built binary with the recorded
-reference campaign:
+Seven suites test the tool and its page in every way at hand; each takes
+`--bin PATH` (the mirror without loops with `--no-loops`), prints its
+checks made, passed, failed and skipped, exits 0 exactly when nothing
+failed, and says the rest in its `--help`:
+
+| suite | what it checks |
+|---|---|
+| `cli-consistency` | every command over hand-written and random instances: the round trip of parse and to_text, the same frontier across workers, ablations and the two searches, determine against every point of the frontier, the bounds around the points, the windows, the JSON and the anytime file, the time limit, the loops at growing bounds, the exit codes |
+| `mirror-agreement` | the loop tool against the mirror on processes without loops, random and from the benchmark, command by command (`--loop`, `--mirror`, `--bench`) |
+| `fuzz` | random and mutated texts, instance files and request bodies: never a panic, a hang, a crash or an answer out of contract, on the command line and on the page (`--port`) |
+| `storm-directions` | Storm as an outside referee: the optima of every component, the frontier with directions and the achievability of budgets |
+| `page-api` | every route of the page server, the lifecycle of a search, the saved processes and their references, the hygiene of the server (`--port`, `--bench`) |
+| `page-ui` | the page driven in a headless browser through Playwright for Python, a screenshot per step (`--port`, `--bench`, `--shots DIR`), console errors counted as defects |
+| `harness-wide` | the exact harness of the loops over hundreds of random processes, the directed frontier against its oracle, the gap test |
+
+The suites start their own page servers on the ports they are given, with
+a store of their own, and never touch a server already running.
+
+The suite that confronts the built binary with the recorded reference
+campaign:
 
 ```sh
 ./target/release/sdcpi test storm-comparison-ablation
