@@ -39,8 +39,9 @@ loop node `v` with region `R` and probability `p`:
   just closed included: if `m < MAX_ITER`, nature draws, `R` starts again
   with probability `p` and the loop is left with `1 - p`; if `m = MAX_ITER`,
   the exit is forced, with probability 1. Leaving sets `v` done, `R` idle,
-  and resets the counts of every node in the subtree of `v`, `v` included:
-  the exit is the one closing that increments no count.
+  raises the count of `v` by one, as every closing does, so that a loop
+  above reads how many times its region, this loop, was closed, and resets
+  the counts of every node strictly under `v`.
 
 The up clause never fires at a loop node, whose closing is its exit. The
 cost and the time are those of the paper: only the fast forward pays. With
