@@ -127,6 +127,20 @@ does not depend on where the accept fired.
 `bound` alone. The page takes `max_iter` with the frontier request, and shows
 `continued` beside a point when its loops met a forced exit.
 
+`--maximize a,b,...` on every command that reads an instance maximizes the
+components named, the time included once it is in. An impact maximized is an
+impact negated, the engine minimizing the negation and the sign turned back
+wherever a value is shown, so the bounds, the loop charges and the gap of a
+forced exit read the negation unchanged. The time maximized is paid as minus
+the advance of the fast forward, a task owes minus what is left of its
+duration, and at a parallel node the two bounds of the time swap: the upper
+bound is the lesser of the two upper bounds and the lower bound the sum,
+which is the negation of the rule for the time minimized, the sum above and
+the greater of the two below. The gap of a forced exit under a parallel node
+has its zero on the upper bound then, not on the lower one. The page sends
+the maximized names as `maximize` with every request, and every answer
+carries `maximized`, one flag per component.
+
 ## Checks
 
 `sdcpi bound <instance> --max-iter K` prints the two bounds at the initial
