@@ -40,7 +40,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::num::Exact;
+use crate::num::{self, Exact, Num};
 use crate::pareto;
 use crate::search::Config;
 use crate::tree::{Kind, Tree};
@@ -451,6 +451,10 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
         }
         ("POST", "/api/svg") => {
             let out = diagram(&body, bench);
+            send(&mut stream, 200, "application/json", &out)
+        }
+        ("POST", "/api/bounds") => {
+            let out = bounds_of(&body, bench);
             send(&mut stream, 200, "application/json", &out)
         }
         _ => send(&mut stream, 404, "text/plain; charset=utf-8", "no such page\n"),
@@ -888,6 +892,58 @@ fn diagram(body: &str, bench: &Bench) -> String {
 
 /// Runs one search and answers with the frontier, every point with the
 /// strategy that attains it.
+/// The two bounds of the process at its initial state, the extremes of the
+/// window the page offers on the expected values, with the time and the
+/// bound on the passes as the page has them.
+fn bounds_of(body: &str, bench: &Bench) -> String {
+    let text = match field(body, "process") {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => return err("no process was given"),
+    };
+    let editing = editing_name(body);
+    let parsed = match assemble(&text, bench, editing.as_deref()) {
+        Ok(p) => p,
+        Err(e) => return err(&e),
+    };
+    let tree = match Tree::parse(&parsed.yaml) {
+        Ok(t) => t,
+        Err(e) => return err(&format!("the instance does not read: {e}")),
+    };
+    let time = matches!(field(body, "time").as_deref(), Some("1") | Some("true"));
+    let mut tree = if time { tree.with_time() } else { tree };
+    tree.max_iter = Some(
+        field(body, "max_iter")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(crate::tree::DEFAULT_MAX_ITER)
+            .clamp(1, 50),
+    );
+    let s0 = crate::state::Engine::new(&tree).initial_state();
+    let b = crate::bound::bounds::<Exact>(&tree, &s0);
+    let names: Vec<String> = (0..tree.k)
+        .map(|c| match tree.meta.impact_names.get(c) {
+            Some(n) if !n.is_empty() => esc(n),
+            _ => esc(&format!("impact {c}")),
+        })
+        .collect();
+    let side = |v: &[Exact]| -> String {
+        let parts: Vec<String> = v.iter().map(|x| format!("{}", x.to_f64())).collect();
+        format!("[{}]", parts.join(", "))
+    };
+    let exact = |v: &[Exact]| -> String {
+        let parts: Vec<String> = v.iter().map(|x| esc(&x.0.to_string())).collect();
+        format!("[{}]", parts.join(", "))
+    };
+    format!(
+        "{{\"time\": {}, \"names\": [{}], \"lower\": {}, \"upper\": {}, \"lower_exact\": {}, \"upper_exact\": {}}}",
+        time,
+        names.join(", "),
+        side(&b.lower),
+        side(&b.upper),
+        exact(&b.lower),
+        exact(&b.upper)
+    )
+}
+
 fn frontier(body: &str, bench: &Bench) -> String {
     let text = match field(body, "process") {
         Some(t) if !t.trim().is_empty() => t,
@@ -922,6 +978,19 @@ fn frontier(body: &str, bench: &Bench) -> String {
     let time = matches!(field(body, "time").as_deref(), Some("1") | Some("true"));
     let mut tree = if time { tree.with_time() } else { tree };
     tree.max_iter = Some(max_iter);
+    // the window on the expected values, `lo,hi;lo,hi;...` in the order of
+    // the components, either side empty for the bound at the initial state
+    let window: Option<Vec<(Option<num_rational::BigRational>, Option<num_rational::BigRational>)>> =
+        field(body, "window").filter(|w| !w.trim().is_empty()).map(|w| {
+            w.split(';')
+                .map(|part| {
+                    let mut it = part.splitn(2, ',');
+                    let lo = it.next().unwrap_or("").trim().to_string();
+                    let hi = it.next().unwrap_or("").trim().to_string();
+                    (num::parse_decimal(&lo), num::parse_decimal(&hi))
+                })
+                .collect()
+        });
 
     // the flags the form gives, read by the very code the command line uses,
     // so that a default is never written twice
@@ -956,6 +1025,7 @@ fn frontier(body: &str, bench: &Bench) -> String {
             anytime: None,
             precision: None,
             components: None,
+            window,
             library: pareto::Library::Biodivine,
             search: Config {
                 certificate: false,
@@ -1058,12 +1128,23 @@ fn frontier(body: &str, bench: &Bench) -> String {
             .to_string()
     };
     format!(
-        "{{\"status\": {}, \"seconds\": {:.6}, \"time\": {}, \"max_iter\": {}, \"components\": [{}], \"names\": [{}], \"apexes\": {}, \
+        "{{\"status\": {}, \"seconds\": {:.6}, \"time\": {}, \"max_iter\": {}, \"window\": {}, \"outside\": {}, \"components\": [{}], \"names\": [{}], \"apexes\": {}, \
          \"expanded\": {}, \"note\": {}, \"points\": [{}]}}",
         esc(status),
         seconds,
         time,
         max_iter,
+        match &report.window {
+            Some(w) => {
+                let parts: Vec<String> = w
+                    .iter()
+                    .map(|(a, b)| format!("[{}, {}]", pareto::approx(a), pareto::approx(b)))
+                    .collect();
+                format!("[{}]", parts.join(", "))
+            }
+            None => "null".to_string(),
+        },
+        report.outside,
         comps.join(", "),
         names.join(", "),
         report.accepts,
