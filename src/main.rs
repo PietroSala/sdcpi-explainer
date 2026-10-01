@@ -100,7 +100,7 @@ the grammar of parse, written inline or in the file
 
 options of every command that reads an instance
   --max-iter K          the passes a loop makes in one activation before its
-                        exit is forced (default 3); inf is the process with
+                        exit is forced (default 1); inf is the process with
                         its loops unbounded, which only bound and the bounds
                         of the other commands accept
   --time 1              the expected time as the component zero of the cost,

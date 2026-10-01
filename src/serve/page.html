@@ -294,7 +294,7 @@
     </div>
     <div>
       <label for="maxiter">Max iterations</label>
-      <input id="maxiter" type="number" min="1" max="50" step="1" value="3" disabled title="the process has no loop">
+      <input id="maxiter" type="number" min="1" max="50" step="1" value="1" disabled title="the process has no loop">
     </div>
   </div>
   <div class="hint">A search cut at the limit returns the points it had found, which are
@@ -1128,10 +1128,10 @@ const h = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 let SELECTED = null;
 
 // The bound on the passes of a loop as the server reads the field: a whole
-// number clamped between 1 and 50, and the default 3 for anything else.
+// number clamped between 1 and 50, and the default 1 for anything else.
 function maxIterSent() {
   const v = $('maxiter').value;
-  return /^\d+$/.test(v) ? Math.min(50, Math.max(1, +v)) : 3;
+  return /^\d+$/.test(v) ? Math.min(50, Math.max(1, +v)) : 1;
 }
 // What the loops of a point would still pay if they ran on past the bound on
 // their passes, when its strategy met a forced exit: per component, in the

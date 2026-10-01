@@ -82,7 +82,7 @@ pub struct Meta {
 
 /// The passes a loop makes in one activation before its exit is forced,
 /// unless `--max-iter` says otherwise.
-pub const DEFAULT_MAX_ITER: u32 = 3;
+pub const DEFAULT_MAX_ITER: u32 = 1;
 
 #[derive(Clone)]
 pub struct Tree {

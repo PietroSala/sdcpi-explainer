@@ -123,7 +123,7 @@ does not depend on where the accept fired.
 
 ## The command line and the page
 
-`--max-iter K` on every command that reads an instance, default 3; `inf` on
+`--max-iter K` on every command that reads an instance, default 1; `inf` on
 `bound` alone. The page takes `max_iter` with the frontier request, and shows
 `continued` beside a point when its loops met a forced exit.
 
