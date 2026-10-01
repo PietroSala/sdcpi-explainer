@@ -104,6 +104,11 @@ impl Writer<'_> {
                 format!("( {} )", parts.join(&format!("\n{pad}, ")))
             };
         }
+        if n.kind == Kind::Loop {
+            // the probability of running the region again, then the region
+            let inner = self.write(n.low, indent + 2);
+            return format!("( {} {inner} )", decimal(self.tree.prob_exact(id), 6));
+        }
         let op = match n.kind {
             Kind::Parallel => "||".to_string(),
             Kind::Choice => "^".to_string(),

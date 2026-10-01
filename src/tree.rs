@@ -31,6 +31,10 @@ pub enum Kind {
     Parallel,
     Choice,
     Nature,
+    /// A loop: one region, `low`, run again after it is done with the
+    /// probability the node carries, and left with the complement; `high`
+    /// is `0`, the node being the one unary node of the grammar.
+    Loop,
 }
 
 impl Kind {
@@ -48,7 +52,8 @@ pub struct Node {
     /// `D(v)` at a task, `0` elsewhere. Integer because every instance of the
     /// grid draws it in `[1, max(2, ceil(log2 t))]`, so it never exceeds 9.
     pub duration: i16,
-    /// `P(v)` at a nature node, the probability of the **low** branch. `0.0`
+    /// `P(v)` at a nature node, the probability of the **low** branch, and at
+    /// a loop node the probability of running the region again. `0.0`
     /// elsewhere, where it is never read.
     pub prob: f64,
 }
@@ -74,6 +79,10 @@ pub struct Meta {
     pub source: String,
     pub expression: String,
 }
+
+/// The passes a loop makes in one activation before its exit is forced,
+/// unless `--max-iter` says otherwise.
+pub const DEFAULT_MAX_ITER: u32 = 3;
 
 #[derive(Clone)]
 pub struct Tree {
@@ -108,6 +117,10 @@ pub struct Tree {
     /// forward pays its advance there and the recursion of the bounds treats
     /// the component apart: see `with_time`.
     pub time: bool,
+    /// The most passes a loop makes in one activation before its exit is
+    /// forced, `MAX_ITER`; `None` is the process with its loops unbounded,
+    /// which the bounds know and the engine cannot run.
+    pub max_iter: Option<u32>,
 }
 
 impl Tree {
@@ -201,7 +214,33 @@ impl Tree {
             task_names: self.task_names.clone(),
             meta,
             time: true,
+            max_iter: self.max_iter,
         }
+    }
+
+    /// The identifiers of the loop nodes, in increasing order.
+    pub fn loops(&self) -> Vec<u32> {
+        (1..=self.n_nodes).filter(|&v| self.kind(v) == Kind::Loop).collect()
+    }
+
+    /// Whether some node of the subtree of `v` sits under a parallel node
+    /// that is itself in the subtree of `v` or above it: the time of a loop
+    /// under a parallel node may not lengthen the whole run.
+    pub fn under_parallel(&self, v: u32) -> bool {
+        // walk from the root looking for the path to v, noting a parallel
+        // node on it
+        fn down(t: &Tree, at: u32, v: u32, seen: bool) -> Option<bool> {
+            if at == 0 {
+                return None;
+            }
+            if at == v {
+                return Some(seen);
+            }
+            let n = t.node(at);
+            let seen = seen || n.kind == Kind::Parallel;
+            down(t, n.low, v, seen).or_else(|| down(t, n.high, v, seen))
+        }
+        down(self, self.root, v, false).unwrap_or(false)
     }
 
     pub fn read(path: &Path) -> Result<Tree, ParseError> {
@@ -328,6 +367,7 @@ impl<'a> Parser<'a> {
             task_names: std::mem::take(&mut self.names),
             meta: std::mem::take(&mut self.meta),
             time: false,
+            max_iter: Some(DEFAULT_MAX_ITER),
         };
         for id in 1..=tree.n_nodes {
             match tree.kind(id) {
@@ -419,6 +459,7 @@ impl<'a> Parser<'a> {
             "parallel" => Kind::Parallel,
             "choice" => Kind::Choice,
             "nature" => Kind::Nature,
+            "loop" => Kind::Loop,
             other => return self.err(format!("unknown node kind {other:?}")),
         };
         let task_name = if kind == Kind::Task {
@@ -426,13 +467,14 @@ impl<'a> Parser<'a> {
         } else {
             String::new()
         };
-        let (prob, prob_exact) = if kind == Kind::Nature {
+        let (prob, prob_exact) = if kind == Kind::Nature || kind == Kind::Loop {
             let p: f64 = kind_value
                 .parse()
                 .map_err(|_| ParseError::new(self.at + 1, format!("{kind_value:?} is not a probability")))?;
             if !(p > 0.0 && p < 1.0) {
                 return self.err(format!(
-                    "a nature node carries {p}, and Definition 3 asks for a probability in (0,1)"
+                    "a {} node carries {p}, and a probability lies in (0,1)",
+                    if kind == Kind::Loop { "loop" } else { "nature" }
                 ));
             }
             let exact = match parse_decimal(kind_value) {
@@ -541,6 +583,13 @@ impl<'a> Parser<'a> {
             for (c, r) in exact.into_iter().enumerate() {
                 self.impacts_exact[a + c] = r;
             }
+        } else if kind == Kind::Loop {
+            if low == 0 {
+                return self.err("a loop node is missing its region, `low`");
+            }
+            if high != 0 {
+                return self.err("a loop node carries one region, `low`, and no `high`");
+            }
         } else if low == 0 || high == 0 {
             return self.err("an internal node is missing a branch");
         }
@@ -635,11 +684,14 @@ impl<'a> Parser<'a> {
                 ),
             ));
         }
-        if tree.n_nodes != 2 * tree.n_tasks - 1 {
+        // a full binary tree has 2t - 1 nodes, and every loop node, the one
+        // unary node, adds one
+        let loops = (1..=tree.n_nodes).filter(|&v| tree.kind(v) == Kind::Loop).count() as u32;
+        if tree.n_nodes != 2 * tree.n_tasks - 1 + loops {
             return Err(ParseError::new(
                 0,
                 format!(
-                    "{} nodes against {} tasks, and a full binary tree has 2t-1",
+                    "{} nodes against {} tasks, and a full binary tree has 2t-1, plus one per loop",
                     tree.n_nodes, tree.n_tasks
                 ),
             ));
@@ -670,6 +722,16 @@ impl<'a> Parser<'a> {
                         format!("the task {id} does not fill its in-order window {lo}..{hi}"),
                     ));
                 }
+            } else if n.kind == Kind::Loop {
+                // one child, the region, numbered below the node, which is
+                // the last of its window
+                if hi != id {
+                    return Err(ParseError::new(
+                        0,
+                        format!("the loop {id} is not the last of its in-order window {lo}..{hi}"),
+                    ));
+                }
+                stack.push((n.low, lo, id - 1));
             } else {
                 stack.push((n.low, lo, id - 1));
                 stack.push((n.high, id + 1, hi));

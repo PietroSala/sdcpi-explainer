@@ -31,6 +31,14 @@
 //! progress in full, and the recursion of the bounds reads the progress of the
 //! tasks alone.
 //!
+//! A loop node is the one internal node whose running value is read: it holds
+//! the number of passes of its region closed in the activation under way,
+//! which the draw at the loop compares with `MAX_ITER`. The counts of the
+//! other nodes, which the semantics keeps for every node, are never read and
+//! are quotiented away with the progress; the counts inside a loop region
+//! are reset at the exit of the loop, which the quotient gives for free, the
+//! region being idle then.
+//!
 //! The quotient is sound by construction here, no rule below reading the value
 //! of an internal node other than through its sign. That the rules themselves
 //! are Definition 9 is checked from outside, by the `bounds` command, which
@@ -71,6 +79,11 @@ pub struct Engine<'t> {
 pub struct Outcome<N: Num> {
     pub decisions: Vec<u32>,
     pub impact: Vec<N>,
+    /// What the loops left behind at their forced exits along the macro
+    /// step: `2k` values, the lower and then the upper bound of the cost
+    /// the unbounded process would still pay in the passes it was denied,
+    /// unscaled by the probability of the branch, as `impact` is.
+    pub gap: Vec<N>,
     pub prob: N::Prob,
     pub state: State,
     pub stop: Stop,
@@ -81,6 +94,9 @@ pub enum StepError {
     /// More outcomes than `max_outcomes`: the macro step out of one choice
     /// state branches too widely to hold.
     TooManyOutcomes(usize),
+    /// A loop met with no bound on its passes: the engine runs the process
+    /// with `MAX_ITER` set and the unbounded one lives in the bounds alone.
+    Unbounded,
 }
 
 impl<'t> Engine<'t> {
@@ -161,6 +177,19 @@ impl<'t> Engine<'t> {
                         3
                     } else if sv >= 0 && lo == IDLE && hi == IDLE {
                         4
+                    } else {
+                        continue;
+                    }
+                }
+                // a loop opens its region as a sequence opens its first one,
+                // and draws, with the rank of a nature node, when the region
+                // is done: it is never closed by the up clause
+                Kind::Loop => {
+                    let lo = s[n.low as usize];
+                    if lo == DONE {
+                        4
+                    } else if sv >= 0 && lo == IDLE {
+                        2
                     } else {
                         continue;
                     }
@@ -269,16 +298,17 @@ impl<'t> Engine<'t> {
     ) -> Result<Vec<Outcome<N>>, StepError> {
         let k = self.tree.k;
         let mut out: Vec<Outcome<N>> = Vec::new();
-        let mut stack: Vec<(State, Vec<u32>, Vec<N>, N::Prob)> =
-            vec![(start, prefix, zeros::<N>(k), N::prob_one())];
+        let mut stack: Vec<(State, Vec<u32>, Vec<N>, Vec<N>, N::Prob)> =
+            vec![(start, prefix, zeros::<N>(k), zeros::<N>(2 * k), N::prob_one())];
 
-        while let Some((mut s, mut decisions, mut impact, mut prob)) = stack.pop() {
+        while let Some((mut s, mut decisions, mut impact, mut gap, mut prob)) = stack.pop() {
             loop {
                 match self.rank_witness(&s) {
                     None => {
                         out.push(Outcome {
                             decisions,
                             impact,
+                            gap,
                             prob,
                             state: s,
                             stop: Stop::Final,
@@ -289,11 +319,53 @@ impl<'t> Engine<'t> {
                         out.push(Outcome {
                             decisions,
                             impact,
+                            gap,
                             prob,
                             state: s,
                             stop: Stop::Choice(v),
                         });
                         break;
+                    }
+                    Some((4, v)) if self.tree.kind(v) == Kind::Loop => {
+                        // the draw of a loop whose region is done: the count
+                        // of the passes closed in this activation sits on the
+                        // node while it runs, the one just closed included
+                        // now; below the bound the region runs again with
+                        // probability p, the loop is left with 1 - p; at the
+                        // bound the exit is forced, and the cost the
+                        // unbounded process would still pay goes to the gap
+                        let n = self.tree.node(v);
+                        let bound = self.tree.max_iter.ok_or(StepError::Unbounded)?;
+                        let closed = s[v as usize] as u32 + 1;
+                        if closed < bound {
+                            if out.len() + stack.len() + 2 > self.max_outcomes {
+                                return Err(StepError::TooManyOutcomes(self.max_outcomes));
+                            }
+                            let p = N::prob_of(self.tree, v);
+                            let mut s_exit = s.clone();
+                            s_exit[n.low as usize] = IDLE;
+                            s_exit[v as usize] = DONE;
+                            let mut d_exit = decisions.clone();
+                            d_exit.push(v);
+                            stack.push((
+                                s_exit,
+                                d_exit,
+                                impact.clone(),
+                                gap.clone(),
+                                N::prob_mul(&prob, &N::prob_complement(&p)),
+                            ));
+                            s[n.low as usize] = 0;
+                            s[v as usize] = closed as i8;
+                            decisions.push(n.low);
+                            prob = N::prob_mul(&prob, &p);
+                        } else {
+                            let tail = crate::bound::continuation::<N>(self.tree, v);
+                            for c in 0..2 * k {
+                                gap[c] = gap[c].add(&tail[c]);
+                            }
+                            s[n.low as usize] = IDLE;
+                            s[v as usize] = DONE;
+                        }
                     }
                     Some((4, v)) => {
                         if out.len() + stack.len() + 2 > self.max_outcomes {
@@ -309,6 +381,7 @@ impl<'t> Engine<'t> {
                             s_high,
                             d_high,
                             impact.clone(),
+                            gap.clone(),
                             N::prob_mul(&prob, &N::prob_complement(&p)),
                         ));
 

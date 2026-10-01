@@ -35,6 +35,7 @@ fn kind_str(k: Kind) -> &'static str {
         Kind::Parallel => "parallel",
         Kind::Choice => "choice",
         Kind::Nature => "nature",
+        Kind::Loop => "loop",
     }
 }
 
@@ -161,6 +162,7 @@ fn label_of(tree: &Tree, id: u32) -> String {
     match n.kind {
         Kind::Task => format!("task {}", tree.task_names[id as usize]),
         Kind::Nature => format!("nature p={}", dbl(n.prob)),
+        Kind::Loop => format!("loop p={}", dbl(n.prob)),
         k => kind_str(k).to_string(),
     }
 }

@@ -1,7 +1,7 @@
 //! The grammar of a process, and the writer of the instance file.
 //!
 //!     process ::= region ("," region)* | region op region
-//!     region  ::= task | "(" process ")" | "@" saved ("[" shown "]")?
+//!     region  ::= task | "(" process ")" | "@" saved ("[" shown "]")? | "(" prob process ")"
 //!     op      ::= "||" | "^" | "^[" prob "]"
 //!     task    ::= "(" name "," duration ")"
 //!             |   "(" name "," duration "," "{" impacts? "}" ")"
@@ -28,6 +28,12 @@
 //! Identifiers are assigned by the in-order traversal, one-based: every node
 //! of the low subtree numbers below its parent, every node of the high
 //! subtree above, which is the numbering the reader of `tree.rs` checks.
+//!
+//! A loop `(p R)` is a region that runs `R` and, once `R` is done, runs it
+//! again with probability `p` or leaves with probability `1 - p`: the
+//! probability, in (0,1), sits right after the parenthesis, where no task
+//! and no process can begin, and the loop node is the one unary node of the
+//! tree, its region being its low child.
 //!
 //! A reference `@saved` stands for a saved process, spliced in place as a
 //! region, which the single-entry single-exit shape of every process allows;
@@ -61,6 +67,11 @@ enum Ast {
     Sub {
         name: String,
         shown: String,
+        inner: Box<Ast>,
+    },
+    /// A loop over a region, run again with the probability after each pass.
+    Loop {
+        prob: f64,
         inner: Box<Ast>,
     },
 }
@@ -409,11 +420,23 @@ fn parse_region(
     }
     sc.eat(b'(')?;
     // a task opens on a name, a wrapped process on another parenthesis or on
-    // a reference
+    // a reference, a loop on its probability
     if matches!(sc.peek(), Some(b'(') | Some(b'@')) {
         let inner = parse_process(sc, ctx, depth + 1)?;
         sc.eat(b')')?;
         return Ok(inner);
+    }
+    if matches!(sc.peek(), Some(c) if c.is_ascii_digit() || c == b'.') {
+        let at = sc.at;
+        let p = sc.number()?;
+        if !(p > 0.0 && p < 1.0) {
+            return Err(format!(
+                "the loop at byte {at} carries {p}, and the probability of running its region again lies in (0,1)"
+            ));
+        }
+        let inner = parse_process(sc, ctx, depth + 1)?;
+        sc.eat(b')')?;
+        return Ok(Ast::Loop { prob: p, inner: Box::new(inner) });
     }
     // a task: name, duration, and an optional impact map
     let name = sc.name()?;
@@ -464,6 +487,10 @@ fn parse_region(
 fn count(ast: &Ast) -> (u32, u32) {
     match ast {
         Ast::Sub { inner, .. } => count(inner),
+        Ast::Loop { inner, .. } => {
+            let (n, t) = count(inner);
+            (n + 1, t)
+        }
         Ast::Task { .. } => (1, 1),
         Ast::Op { low, high, .. } => {
             let (nl, tl) = count(low);
@@ -486,6 +513,16 @@ fn emit(ast: &Ast, k: usize, next: &mut u32, indent: usize, out: &mut String) {
     match ast {
         // a spliced process is its tree: the engine never sees the seam
         Ast::Sub { inner, .. } => emit(inner, k, next, indent, out),
+        Ast::Loop { prob, inner } => {
+            // in-order with one child: the region first, then the node
+            let (low_nodes, _) = count(inner);
+            let my_id = *next + low_nodes + 1;
+            out.push_str(&format!("{pad}- loop: {prob}\n"));
+            out.push_str(&format!("{pad}  id: {my_id}\n"));
+            out.push_str(&format!("{pad}  low:\n"));
+            emit(inner, k, next, indent + 2, out);
+            *next += 1;
+        }
         Ast::Task { name, duration, impact } => {
             let mut v = vec![0.0f64; k];
             for (i, x) in impact {
@@ -549,6 +586,14 @@ fn walk(
             let id = *next;
             labels[id as usize] = format!("{prefix}{own}");
             walk(high, next, own, prefix, depth, labels, subs);
+            id
+        }
+        Ast::Loop { inner, .. } => {
+            walk(inner, next, own, prefix, depth, labels, subs);
+            *next += 1;
+            *own += 1;
+            let id = *next;
+            labels[id as usize] = format!("{prefix}{own}");
             id
         }
         Ast::Sub { name, shown, inner } => {
@@ -710,6 +755,19 @@ mod tests {
         assert_eq!(p.labels[3], "3-1-1-1");
         assert_eq!(p.labels[4], "3");
         assert_eq!(p.labels[5], "3-1-1-3");
+    }
+
+    #[test]
+    fn a_loop_is_a_probability_after_the_parenthesis() {
+        let p = to_yaml("(A, 1, {x: 1}) , (0.5 (B, 2, {x: 3}) , (C, 1, {x: 1}))").unwrap();
+        // A(1) seq(2) [B(3) seq(4) C(5)] loop(6): one node more than a full binary tree
+        assert!(p.yaml.contains("nodes: 6"), "{}", p.yaml);
+        assert!(p.yaml.contains("- loop: 0.5\n        id: 6\n"), "{}", p.yaml);
+        assert_eq!(p.labels[6], "6");
+        let e = to_yaml("(1.5 (B, 2, {x: 3}))").unwrap_err();
+        assert!(e.contains("(0,1)"), "{e}");
+        assert!(to_yaml("(0.25 (B, 2, {x: 3}))").is_ok());
+        assert!(to_yaml("( (A, 1, {x: 1}) || (0.1 (B, 2, {x: 3})) )").is_ok());
     }
 
     #[test]

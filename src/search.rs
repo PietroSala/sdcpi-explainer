@@ -228,10 +228,19 @@ impl<'a, N: Num> Frontier<'a, N> {
         }
     }
 
+    /// The gap of the frontier, `2k` values: the sum over every history,
+    /// open or final, of `P(h) G(h)`.
+    fn continued(&self, k: usize) -> Vec<N> {
+        self.sums[3 * k..5 * k].to_vec()
+    }
+
     fn from_histories(k: usize, histories: &[&'a History<'a, N>]) -> Frontier<'a, N> {
-        let mut sums = zeros::<N>(3 * k);
+        let mut sums = zeros::<N>(5 * k);
         let mut open = Vec::new();
         for h in histories {
+            for c in 0..2 * k {
+                sums[3 * k + c] = sums[3 * k + c].add(&h.g_hat[c]);
+            }
             if h.is_open() {
                 for c in 0..k {
                     sums[k + c] = sums[k + c].add(&h.e_hat[c]);
@@ -270,6 +279,9 @@ impl<'a, N: Num> Frontier<'a, N> {
             sums[c] = sums[c].add(&exp.closed_delta[c]);
             sums[k + c] = sums[k + c].add(&exp.open_e_delta[c].sub(&elected.e_hat[c]));
             sums[2 * k + c] = sums[2 * k + c].add(&exp.open_l_delta[c].sub(&elected.l_hat[c]));
+        }
+        for c in 0..2 * k {
+            sums[3 * k + c] = sums[3 * k + c].add(&exp.gap_delta[c].sub(&elected.g_hat[c]));
         }
         if open.is_empty() {
             for c in k..3 * k {
@@ -315,6 +327,10 @@ pub struct Strategy<N: Num> {
     /// `E(F)` on the winning frontier: what every completion of the partial
     /// strategy pays at most, the certificate of the accept.
     pub accepting: Vec<N>,
+    /// What the loops left behind at their forced exits over the frontier,
+    /// `2k` values, lower then upper: what the unbounded process would still
+    /// pay beyond the bound on the passes, by the probability of each path.
+    pub continued: Vec<N>,
 }
 
 fn resolve(sigma: &Option<Arc<SigmaNode>>) -> Vec<(Vec<u32>, u32)> {
@@ -691,6 +707,7 @@ fn run<'a, N: Num>(shared: &Shared<'a, N>, worker: usize, first: CtNode<'a, N>, 
                             frontier_size: open_now as usize,
                             histories: node.frontier.total,
                             accepting: scratch.clone(),
+                            continued: node.frontier.continued(k),
                         },
                     );
                 }
@@ -722,6 +739,7 @@ fn run<'a, N: Num>(shared: &Shared<'a, N>, worker: usize, first: CtNode<'a, N>, 
                         frontier_size: open_now as usize,
                         histories: node.frontier.total,
                         accepting: scratch.clone(),
+                        continued: node.frontier.continued(k),
                     }));
                     return;
                 }

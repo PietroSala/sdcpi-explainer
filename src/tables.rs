@@ -114,6 +114,9 @@ pub enum Branch {
 pub struct Extension<'a, N: Num> {
     pub decisions: Box<[u32]>,
     pub impact: Box<[N]>,
+    /// The gap the forced exits of the loops left along the macro step,
+    /// `2k` values, lower then upper, unscaled as `impact` is.
+    pub gap: Box<[N]>,
     pub prob: N::Prob,
     pub cs: &'a ChoiceState<'a, N>,
 }
@@ -167,6 +170,8 @@ pub struct Expansion<'a, N: Num> {
     pub open_e_delta: Box<[N]>,
     /// What the open children add to the rejecting sum.
     pub open_l_delta: Box<[N]>,
+    /// What every child, open or final, adds to the gap of the frontier.
+    pub gap_delta: Box<[N]>,
     /// How many children are already final. They leave no trace in the frontier
     /// beyond their contribution to the closed part, so a frontier that wants to
     /// say how many histories it holds has to be told their number here.
@@ -182,6 +187,8 @@ pub struct History<'a, N: Num> {
     pub dh: Box<[u32]>,
     /// `I_dh`, the impact accumulated along the path.
     pub impact: Box<[N]>,
+    /// `G_dh`, the gap accumulated along the path, `2k` values, unscaled.
+    pub gap: Box<[N]>,
     /// `P_dh`, the product of the transition probabilities along the path.
     pub prob: N::Prob,
     /// The choice state the path ends in, shared with every other history that
@@ -192,6 +199,10 @@ pub struct History<'a, N: Num> {
     pub e_hat: Box<[N]>,
     /// `P_dh * (I_dh + L_cs)`, the contribution to the rejecting sum.
     pub l_hat: Box<[N]>,
+    /// `P_dh * G_dh`, the gap of the path scaled by its probability: what
+    /// the unbounded process would still pay, from below and from above, in
+    /// the passes the loops along the path were denied.
+    pub g_hat: Box<[N]>,
     low: OnceLock<&'a Expansion<'a, N>>,
     high: OnceLock<&'a Expansion<'a, N>>,
 }
@@ -201,6 +212,14 @@ impl<'a, N: Num> History<'a, N> {
     pub fn is_open(&self) -> bool {
         !self.cs.is_final()
     }
+}
+
+/// The gap of a history before scaling, read back from `g_hat`: the scaled
+/// value divided by the probability would need a division the arithmetic
+/// does not offer, so the gap is kept on the history too.
+#[inline]
+fn elected_gap<'a, N: Num>(h: &History<'a, N>, c: usize) -> N {
+    h.gap[c].clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +341,7 @@ impl<'a, N: Num> Store<'a, N> {
             .map(|o| Extension {
                 decisions: o.decisions.into_boxed_slice(),
                 impact: o.impact.into_boxed_slice(),
+                gap: o.gap.into_boxed_slice(),
                 prob: o.prob,
                 cs: self.intern_cs(o.state, o.stop),
             })
@@ -338,6 +358,7 @@ impl<'a, N: Num> Store<'a, N> {
         &self,
         dh: Vec<u32>,
         impact: Vec<N>,
+        gap: Vec<N>,
         prob: N::Prob,
         cs: &'a ChoiceState<'a, N>,
     ) -> &'a History<'a, N> {
@@ -355,14 +376,17 @@ impl<'a, N: Num> Store<'a, N> {
             e_hat.push(impact[c].add(&cs.upper[c]).scale(&prob));
             l_hat.push(impact[c].add(&cs.lower[c]).scale(&prob));
         }
+        let g_hat: Vec<N> = gap.iter().map(|g| g.scale(&prob)).collect();
         let record = History {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             dh: dh.clone().into_boxed_slice(),
             impact: impact.into_boxed_slice(),
+            gap: gap.into_boxed_slice(),
             prob,
             cs,
             e_hat: e_hat.into_boxed_slice(),
             l_hat: l_hat.into_boxed_slice(),
+            g_hat: g_hat.into_boxed_slice(),
             low: OnceLock::new(),
             high: OnceLock::new(),
         };
@@ -398,6 +422,7 @@ impl<'a, N: Num> Store<'a, N> {
         let mut closed_delta = zeros::<N>(k);
         let mut open_e_delta = zeros::<N>(k);
         let mut open_l_delta = zeros::<N>(k);
+        let mut gap_delta = zeros::<N>(2 * k);
         for ext in exts.iter() {
             let mut dh = Vec::with_capacity(elected.dh.len() + ext.decisions.len());
             dh.extend_from_slice(&elected.dh);
@@ -406,7 +431,13 @@ impl<'a, N: Num> Store<'a, N> {
             for c in 0..k {
                 impact.push(elected.impact[c].add(&ext.impact[c]));
             }
-            let h = self.intern_history(dh, impact, N::prob_mul(&elected.prob, &ext.prob), ext.cs);
+            // the gap of the path: what the loops left behind so far, the
+            // macro step added
+            let gap: Vec<N> = (0..2 * k).map(|c| elected_gap(elected, c).add(&ext.gap[c])).collect();
+            let h = self.intern_history(dh, impact, gap, N::prob_mul(&elected.prob, &ext.prob), ext.cs);
+            for c in 0..2 * k {
+                gap_delta[c] = gap_delta[c].add(&h.g_hat[c]);
+            }
             if h.is_open() {
                 for c in 0..k {
                     open_e_delta[c] = open_e_delta[c].add(&h.e_hat[c]);
@@ -425,6 +456,7 @@ impl<'a, N: Num> Store<'a, N> {
             closed_delta: closed_delta.into_boxed_slice(),
             open_e_delta: open_e_delta.into_boxed_slice(),
             open_l_delta: open_l_delta.into_boxed_slice(),
+            gap_delta: gap_delta.into_boxed_slice(),
         };
         let placed = self.records.expansions.alloc(built);
         Ok(cell.get_or_init(|| placed))
@@ -440,7 +472,7 @@ impl<'a, N: Num> Store<'a, N> {
             .into_iter()
             .map(|o| {
                 let cs = self.intern_cs(o.state, o.stop);
-                self.intern_history(o.decisions, o.impact, o.prob, cs)
+                self.intern_history(o.decisions, o.impact, o.gap, o.prob, cs)
             })
             .collect())
     }

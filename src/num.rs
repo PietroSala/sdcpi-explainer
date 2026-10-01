@@ -58,6 +58,11 @@ pub trait Num: Clone + Send + Sync + fmt::Debug + 'static {
     /// A value from a whole number: the advance of a fast forward, which the
     /// component zero of the cost pays when the time is in.
     fn from_u32(n: u32) -> Self;
+    /// The expected number of further passes of a loop that runs its region
+    /// again with probability `p` after each pass: `p + p^2 + ... + p^m` when
+    /// at most `m` further passes are allowed, and `p / (1 - p)` when the
+    /// loop is unbounded.
+    fn geometric(p: &Self::Prob, further: Option<u32>) -> Self::Prob;
 }
 
 #[inline]
@@ -170,6 +175,12 @@ impl Num for f64 {
     #[inline]
     fn from_u32(n: u32) -> f64 {
         n as f64
+    }
+    fn geometric(p: &f64, further: Option<u32>) -> f64 {
+        match further {
+            None => p / (1.0 - p),
+            Some(m) => p * (1.0 - p.powi(m as i32)) / (1.0 - p),
+        }
     }
 }
 
@@ -316,6 +327,23 @@ impl Num for Exact {
     }
     fn from_u32(n: u32) -> Exact {
         Exact(BigRational::from_integer(BigInt::from(n)))
+    }
+    fn geometric(p: &BigRational, further: Option<u32>) -> BigRational {
+        let one = BigRational::one();
+        match further {
+            None => p / (&one - p),
+            Some(m) => {
+                // the sum written out, exact and small: m is the bound on
+                // the passes, a handful
+                let mut sum = BigRational::zero();
+                let mut power = p.clone();
+                for _ in 0..m {
+                    sum += &power;
+                    power *= p;
+                }
+                sum
+            }
+        }
     }
 }
 

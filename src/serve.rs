@@ -896,6 +896,11 @@ fn frontier(body: &str, bench: &Bench) -> String {
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(30.0)
         .clamp(1.0, MAX_LIMIT);
+    // the passes a loop makes before its exit is forced, a small number
+    let max_iter = field(body, "max_iter")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(crate::tree::DEFAULT_MAX_ITER)
+        .clamp(1, 50);
 
     // the process as the parser of the crate reads it, its references to the
     // saved processes spliced in, then the tree
@@ -912,7 +917,8 @@ fn frontier(body: &str, bench: &Bench) -> String {
     // the expected time as the component zero of the frontier, when the
     // page asks for it: the same transform the flag --time makes
     let time = matches!(field(body, "time").as_deref(), Some("1") | Some("true"));
-    let tree = if time { tree.with_time() } else { tree };
+    let mut tree = if time { tree.with_time() } else { tree };
+    tree.max_iter = Some(max_iter);
 
     // the flags the form gives, read by the very code the command line uses,
     // so that a default is never written twice
@@ -1003,11 +1009,24 @@ fn frontier(body: &str, bench: &Bench) -> String {
                 })
                 .collect(),
         };
+        // what the loops would still pay beyond the bound on their passes,
+        // when the witness met a forced exit
+        let continued = if p.continued.iter().any(|g| g.numer().sign() != num_bigint::Sign::NoSign) {
+            let k = p.continued.len() / 2;
+            let side = |v: &[num_rational::BigRational]| -> String {
+                let parts: Vec<String> = v.iter().map(|x| format!("{:.6}", pareto::approx(x))).collect();
+                format!("[{}]", parts.join(", "))
+            };
+            format!("{{\"low\": {}, \"up\": {}}}", side(&p.continued[..k]), side(&p.continued[k..]))
+        } else {
+            "null".to_string()
+        };
         points.push(format!(
-            "{{\"value\": [{}], \"approx\": [{}], \"certified\": {}, \"steps\": [{}]}}",
+            "{{\"value\": [{}], \"approx\": [{}], \"certified\": {}, \"continued\": {}, \"steps\": [{}]}}",
             value.join(", "),
             approx.join(", "),
             p.certified,
+            continued,
             steps.join(", ")
         ));
     }

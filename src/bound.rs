@@ -55,6 +55,38 @@ pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
     }
 }
 
+/// `U` and `L` of the region of the loop `v` from its idle state, the
+/// charge of one pass: `2k` values, `U` then `L`.
+fn pass<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
+    let idle = vec![IDLE; tree.nodes.len()];
+    let mut st: Vec<N> = Vec::with_capacity(2 * tree.k);
+    rec(tree, &idle, tree.node(v).low, &mut st);
+    st
+}
+
+/// What the unbounded process would still pay at a forced exit of the loop
+/// `v`: `2k` values, the lower bounds then the upper ones, of the passes
+/// the loop is denied, `p / (1 - p)` passes each worth a charge of the
+/// region. The lower bound of the time is zero under a parallel node, the
+/// passes of a branch not lengthening the whole run for certain.
+pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
+    let k = tree.k;
+    let p = N::prob_of(tree, v);
+    let g = N::geometric(&p, None);
+    let one = pass::<N>(tree, v);
+    let mut out: Vec<N> = Vec::with_capacity(2 * k);
+    for c in 0..k {
+        out.push(one[k + c].scale(&g));
+    }
+    for c in 0..k {
+        out.push(one[c].scale(&g));
+    }
+    if tree.time && tree.under_parallel(v) {
+        out[0] = N::zero();
+    }
+    out
+}
+
 /// Pushes the `2k` values `U_s(v)` then `L_s(v)` on `st`.
 ///
 /// The scratch stack keeps the recursion free of allocation: a combinator reads
@@ -109,6 +141,41 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>) {
             rec(t, s, n.low, st);
             rec(t, s, n.high, st);
             fold_parallel(st, k, t.time);
+        }
+
+        // A loop pays its region once per pass: the pass under way, if any,
+        // as the recursion charges it from the state, and then the further
+        // passes, `p + p^2 + ...` of them in expectation up to the bound on
+        // the passes, each worth the charge of the region from its idle
+        // state. Both bounds take the sum, the passes running one after the
+        // other, the time included.
+        Kind::Loop => {
+            let p = N::prob_of(t, v);
+            let r = n.low;
+            let count = if s[v as usize] >= 0 { s[v as usize] as u32 } else { 0 };
+            let closed = match s[r as usize] {
+                DONE => {
+                    for _ in 0..2 * k {
+                        st.push(N::zero());
+                    }
+                    count + 1
+                }
+                x if x >= 0 => {
+                    rec(t, s, r, st);
+                    count + 1
+                }
+                _ => {
+                    rec(t, s, r, st);
+                    1
+                }
+            };
+            let further = t.max_iter.map(|m| m.saturating_sub(closed));
+            let g = N::geometric(&p, further);
+            let one = pass::<N>(t, v);
+            let base = st.len() - 2 * k;
+            for j in 0..2 * k {
+                st[base + j] = st[base + j].add(&one[j].scale(&g));
+            }
         }
 
         Kind::Choice | Kind::Nature => {

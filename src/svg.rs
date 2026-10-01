@@ -81,6 +81,10 @@ const TOGGLE: f64 = 14.0;
 /// The margin of the bold box of an expanded sub-process: room for its
 /// corner line and for the minus in its corner.
 const SUB_M: f64 = 18.0;
+/// The band above and below the region of a loop: the back edge runs through
+/// the upper one, the probability of leaving sits in the lower one, and the
+/// two being equal keeps the flow line at the middle of the box.
+const BACK: f64 = 26.0;
 const CLOCK_R: f64 = 7.0;
 /// The column the clock takes at the right of a box, and its height with
 /// the number under it.
@@ -363,6 +367,15 @@ fn measure(tree: &Tree, id: u32, s: &mut Sizes) {
                 s.h[n.low as usize] + VGAP + s.h[n.high as usize],
             )
         }
+        // a loop: the join, the region, the split, the back edge over the
+        // region in the band above it
+        Kind::Loop => {
+            measure(tree, n.low, s);
+            (
+                GW + GAP + s.w[n.low as usize] + GAP + GW,
+                s.h[n.low as usize] + 2.0 * BACK,
+            )
+        }
     };
     s.w[id as usize] = w + 2.0 * m;
     s.h[id as usize] = h + 2.0 * m;
@@ -402,6 +415,7 @@ fn diamond(out: &mut String, id: u32, role: &str, kind: Kind, cx: f64, cy: f64) 
         match kind {
             Kind::Parallel => "parallel",
             Kind::Choice => "choice",
+            Kind::Loop => "loop",
             _ => "nature",
         },
         cx, cy - r, cx + r, cy, cx, cy + r, cx - r, cy
@@ -412,7 +426,9 @@ fn diamond(out: &mut String, id: u32, role: &str, kind: Kind, cx: f64, cy: f64) 
             "<path class=\"mark\" d=\"M {:.1} {:.1} L {:.1} {:.1} M {:.1} {:.1} L {:.1} {:.1}\"/>\n",
             cx - m, cy, cx + m, cy, cx, cy - m, cx, cy + m
         )),
-        Kind::Choice => out.push_str(&format!(
+        // a loop is an exclusive gateway on both sides, the join and the
+        // split, the split drawing: the same cross
+        Kind::Choice | Kind::Loop => out.push_str(&format!(
             "<path class=\"mark\" d=\"M {:.1} {:.1} L {:.1} {:.1} M {:.1} {:.1} L {:.1} {:.1}\"/>\n",
             cx - m * 0.75, cy - m * 0.75, cx + m * 0.75, cy + m * 0.75,
             cx - m * 0.75, cy + m * 0.75, cx + m * 0.75, cy - m * 0.75
@@ -645,6 +661,36 @@ fn draw(tree: &Tree, id: u32, x: f64, y: f64, s: &Sizes, out: &mut String) {
             flow(out, &n.low.to_string(), &join, &[(x1 + wl - il, ayl), (jx, ayl), (jx, ay - r)]);
             flow(out, &n.high.to_string(), &join, &[(x1 + wh - ih, ayh), (jx, ayh), (jx, ay + r)]);
             diamond(out, id, "join", n.kind, jx, ay);
+        }
+        Kind::Loop => {
+            // the join at the left, the region on the flow line, the split
+            // at the right; from the top of the split the back edge climbs
+            // into the band above the region, runs left and comes down into
+            // the top of the join, with the probability of running again on
+            // it; the probability of leaving sits under the split
+            let (wl, hl) = (s.w[n.low as usize], s.h[n.low as usize]);
+            let il = inset(tree, n.low, s);
+            let r = GW / 2.0;
+            let cx = x + r; // the join
+            let x1 = x + GW + GAP; // where the region starts
+            let jx = x1 + wl + GAP + r; // the split
+            let top = ay - hl / 2.0 - BACK / 2.0;
+            let join = format!("{id}:join");
+            let split = format!("{id}:split");
+            diamond(out, id, "join", n.kind, cx, ay);
+            flow(out, &join, &n.low.to_string(), &[(cx + r, ay), (x1 + il, ay)]);
+            draw(tree, n.low, x1, ay - hl / 2.0, s, out);
+            flow(out, &n.low.to_string(), &split, &[(x1 + wl - il, ay), (jx - r, ay)]);
+            diamond(out, id, "split", n.kind, jx, ay);
+            flow(out, &split, &join, &[(jx, ay - r), (jx, top), (cx, top), (cx, ay - r)]);
+            let p = tree.prob_exact(id);
+            let q = num_rational::BigRational::from_integer(1.into()) - p;
+            out.push_str(&format!(
+                "<text class=\"prob\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{} again</text>\n\
+                 <text class=\"prob\" x=\"{jx:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{} out</text>\n",
+                jx - r - 4.0, top - 4.0, decimal(p, 6),
+                ay + r + 13.0, decimal(&q, 6)
+            ));
         }
     }
 }

@@ -509,6 +509,14 @@ fn denominator(tree: &Tree) -> BigInt {
             Kind::Sequence | Kind::Parallel => rec(tree, n.low) * rec(tree, n.high),
             Kind::Choice => rec(tree, n.low).lcm(&rec(tree, n.high)),
             Kind::Nature => tree.prob_exact(v).denom() * rec(tree, n.low).lcm(&rec(tree, n.high)),
+            // a loop draws at most max_iter - 1 times in an activation and
+            // runs its region at most max_iter times, the probabilities of
+            // the passes multiplying: a multiple of the denominator, which
+            // is all the tick needs
+            Kind::Loop => {
+                let m = tree.max_iter.unwrap_or(1);
+                tree.prob_exact(v).denom().pow(m) * rec(tree, n.low).pow(m)
+            }
         }
     }
     let mut d = BigInt::one();
@@ -719,6 +727,16 @@ pub struct Point {
     /// node lies below it, in one phase, or no unknown budget lies below it,
     /// in two.
     pub certified: bool,
+    /// What the loops of the witness left behind at their forced exits,
+    /// `2k` values, lower then upper: what the unbounded process would still
+    /// pay beyond the bound on the passes, by the probability of each path.
+    /// Empty without a witness.
+    pub continued: Vec<BigRational>,
+}
+
+/// The gap of a strategy as rationals.
+fn continued_of(strategy: &Strategy<Exact>) -> Vec<BigRational> {
+    strategy.continued.iter().map(|e| e.0.clone()).collect()
 }
 
 #[derive(Clone, Debug)]
@@ -940,6 +958,7 @@ impl<O: Obdd> FrontierOracle<Exact> for Oracle<O> {
             value,
             ticks: ta,
             origin: Origin::Query(n),
+            continued: continued_of(&strategy),
             witness: Some(Witness {
                 decisions: strategy.decisions,
                 histories: strategy.histories,
@@ -1009,6 +1028,7 @@ impl FrontierOracle<Exact> for Antichain {
             value,
             ticks: ta,
             origin: Origin::Query(n),
+            continued: continued_of(&strategy),
             witness: Some(Witness {
                 decisions: strategy.decisions,
                 histories: strategy.histories,
@@ -1305,6 +1325,7 @@ fn run<O: Obdd>(tree: &Tree, opts: Options) -> Result<Report, String> {
         origin: Origin::Upper,
         witness: None,
         certified: true,
+        continued: Vec::new(),
     }];
     let mut sol = grid.cone_above(&o, &zero);
     for i in 0..k {
@@ -1318,6 +1339,7 @@ fn run<O: Obdd>(tree: &Tree, opts: Options) -> Result<Report, String> {
             origin: Origin::Axis(i),
             witness: None,
             certified: true,
+            continued: Vec::new(),
         });
         sol = o.or(&sol, &grid.cone_above(&o, &ta));
     }
@@ -1398,6 +1420,7 @@ fn run<O: Obdd>(tree: &Tree, opts: Options) -> Result<Report, String> {
                     value,
                     ticks: ta,
                     origin: Origin::Query(queries),
+                    continued: continued_of(&strategy),
                     witness: Some(Witness {
                         decisions: strategy.decisions,
                         histories: strategy.histories,
@@ -1524,6 +1547,7 @@ fn run<O: Obdd>(tree: &Tree, opts: Options) -> Result<Report, String> {
                     p.value = strategy.accepting.iter().map(|e| e.0.clone()).collect();
                     p.ticks = (0..k).map(|i| grid.tick_floor(i, &p.value[i])).collect();
                 }
+                p.continued = continued_of(&strategy);
                 p.witness = Some(Witness {
                     decisions: strategy.decisions,
                     histories: strategy.histories,

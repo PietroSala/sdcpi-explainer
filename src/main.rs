@@ -99,6 +99,10 @@ the grammar of parse, written inline or in the file
   names first appear, the vectors mapped by that order.
 
 options of every command that reads an instance
+  --max-iter K          the passes a loop makes in one activation before its
+                        exit is forced (default 3); inf is the process with
+                        its loops unbounded, which only bound and the bounds
+                        of the other commands accept
   --time 1              the expected time as the component zero of the cost,
                         in front of the impacts, which keep their order: a
                         fast forward pays its advance there, a task is
@@ -271,7 +275,18 @@ fn load(args: &Args) -> Result<(PathBuf, Tree), String> {
     let tree = Tree::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     // the expected time as the component zero, in front of the impacts,
     // for every command that reads an instance
-    let tree = if args.flag("time").is_some() { tree.with_time() } else { tree };
+    let mut tree = if args.flag("time").is_some() { tree.with_time() } else { tree };
+    // the bound on the passes of a loop, `inf` for the unbounded process,
+    // which the bounds know and the engine refuses
+    if let Some(m) = args.flag("max-iter") {
+        tree.max_iter = match m {
+            "inf" | "none" => None,
+            t => match t.parse::<u32>() {
+                Ok(v) if v >= 1 => Some(v),
+                _ => return Err(format!("--max-iter wants a positive integer or inf, found {t:?}")),
+            },
+        };
+    }
     Ok((path, tree))
 }
 
@@ -459,6 +474,11 @@ fn cmd_info(args: &[String]) -> i32 {
     });
     println!("  choice      {choices}");
     println!("  nature      {natures}");
+    println!("loops         {}", tree.loops().len());
+    println!(
+        "max iter      {}",
+        tree.max_iter.map(|m| m.to_string()).unwrap_or_else(|| "inf".to_string())
+    );
     println!("max duration  {}", m.max_duration);
     let total = tree.total_impact();
     println!("total impact  {}", fmt_vec(&total));
@@ -749,6 +769,9 @@ fn cmd_to_prism(args: &[String]) -> i32 {
         Ok(v) => v,
         Err(e) => return fail(&e),
     };
+    if !tree.loops().is_empty() {
+        return fail("the PRISM model of a process with loops is not written yet");
+    }
     let history = match args.flag("encode-history") {
         None | Some("true") => true,
         Some("false") => false,
@@ -1170,6 +1193,15 @@ fn cmd_pareto(args: &[String]) -> i32 {
             }
             None => println!("  witness      none"),
         }
+        // what the loops would still pay beyond the bound on their passes
+        if p.continued.iter().any(|g| g.numer().sign() != num_bigint::Sign::NoSign) {
+            let k = p.continued.len() / 2;
+            println!(
+                "  continued    + {} to + {}",
+                dec(&p.continued[..k]),
+                dec(&p.continued[k..])
+            );
+        }
     }
     if let Some(path) = args.flag("json") {
         let text = json_report(&tree, &report, elapsed, print_strategy);
@@ -1268,6 +1300,14 @@ fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bo
         let approx: Vec<String> = p.value.iter().map(|v| format!("{:.9}", pareto::approx(v))).collect();
         o.push_str("    {\n");
         o.push_str(&format!("      \"value\": {},\n", strs(&p.value)));
+        if !p.continued.is_empty() {
+            let k = p.continued.len() / 2;
+            o.push_str(&format!(
+                "      \"continued\": {{\"low\": {}, \"up\": {}}},\n",
+                strs(&p.continued[..k]),
+                strs(&p.continued[k..])
+            ));
+        }
         o.push_str(&format!("      \"certified\": {},\n", p.certified));
         o.push_str(&format!("      \"approx\": [{}],\n", approx.join(", ")));
         o.push_str(&format!(
