@@ -223,9 +223,9 @@ impl Tree {
         (1..=self.n_nodes).filter(|&v| self.kind(v) == Kind::Loop).collect()
     }
 
-    /// Whether some node of the subtree of `v` sits under a parallel node
-    /// that is itself in the subtree of `v` or above it: the time of a loop
-    /// under a parallel node may not lengthen the whole run.
+    /// Whether a parallel node sits on the path from the root to `v`: the
+    /// time of a loop under a parallel node may not lengthen the whole run,
+    /// the other region of that node possibly lasting longer.
     pub fn under_parallel(&self, v: u32) -> bool {
         // walk from the root looking for the path to v, noting a parallel
         // node on it

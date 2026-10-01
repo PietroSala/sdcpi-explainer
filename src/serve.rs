@@ -1016,11 +1016,23 @@ fn frontier(body: &str, bench: &Bench) -> String {
         // when the witness met a forced exit
         let continued = if p.continued.iter().any(|g| g.numer().sign() != num_bigint::Sign::NoSign) {
             let k = p.continued.len() / 2;
+            // the numbers at the precision of a double, a small gap being
+            // the usual one, and the rationals beside them
             let side = |v: &[num_rational::BigRational]| -> String {
-                let parts: Vec<String> = v.iter().map(|x| format!("{:.6}", pareto::approx(x))).collect();
+                let parts: Vec<String> = v.iter().map(|x| format!("{}", pareto::approx(x))).collect();
                 format!("[{}]", parts.join(", "))
             };
-            format!("{{\"low\": {}, \"up\": {}}}", side(&p.continued[..k]), side(&p.continued[k..]))
+            let exact = |v: &[num_rational::BigRational]| -> String {
+                let parts: Vec<String> = v.iter().map(|x| esc(&x.to_string())).collect();
+                format!("[{}]", parts.join(", "))
+            };
+            format!(
+                "{{\"low\": {}, \"up\": {}, \"low_exact\": {}, \"up_exact\": {}}}",
+                side(&p.continued[..k]),
+                side(&p.continued[k..]),
+                exact(&p.continued[..k]),
+                exact(&p.continued[k..])
+            )
         } else {
             "null".to_string()
         };
@@ -1046,11 +1058,12 @@ fn frontier(body: &str, bench: &Bench) -> String {
             .to_string()
     };
     format!(
-        "{{\"status\": {}, \"seconds\": {:.6}, \"time\": {}, \"components\": [{}], \"names\": [{}], \"apexes\": {}, \
+        "{{\"status\": {}, \"seconds\": {:.6}, \"time\": {}, \"max_iter\": {}, \"components\": [{}], \"names\": [{}], \"apexes\": {}, \
          \"expanded\": {}, \"note\": {}, \"points\": [{}]}}",
         esc(status),
         seconds,
         time,
+        max_iter,
         comps.join(", "),
         names.join(", "),
         report.accepts,

@@ -284,8 +284,10 @@ fn load(args: &Args) -> Result<(PathBuf, Tree), String> {
         tree.max_iter = match m {
             "inf" | "none" => None,
             t => match t.parse::<u32>() {
-                Ok(v) if v >= 1 => Some(v),
-                _ => return Err(format!("--max-iter wants a positive integer or inf, found {t:?}")),
+                // the count of a loop sits in the byte of its node: a bound
+                // above 127 would wrap it
+                Ok(v) if (1..=127).contains(&v) => Some(v),
+                _ => return Err(format!("--max-iter wants an integer between 1 and 127, or inf, found {t:?}")),
             },
         };
     }
@@ -971,6 +973,16 @@ fn run_determine<N: Num>(
         if exact {
             println!("accepting      {}", fmt_exact(&s.accepting));
         }
+        // what the loops would still pay past the bound on their passes
+        if s.continued.iter().any(|g| g.to_f64() != 0.0) {
+            let k = s.continued.len() / 2;
+            let side = |v: &[N]| -> Vec<f64> { v.iter().map(|x| x.to_f64()).collect() };
+            println!(
+                "continued      + {} to + {}",
+                fmt_vec(&side(&s.continued[..k])),
+                fmt_vec(&side(&s.continued[k..]))
+            );
+        }
         if print_size || print_strategy {
             // How large the partial strategy is, which is the third thing a
             // caller may want after the outcome and the strategy itself. The
@@ -1366,7 +1378,12 @@ fn cmd_bound(args: &[String]) -> i32 {
     println!("L at s0    {}", fmt_vec(&b.lower));
     let initial = match store.initial_histories() {
         Ok(v) => v,
-        Err(e) => return fail(&format!("{e:?}")),
+        Err(e) => {
+            // with the loops unbounded the engine does not run: the two
+            // bounds above are what the call is for
+            println!("root E     unavailable: {e:?}");
+            return 0;
+        }
     };
     let k = tree.k;
     let (mut e, mut l) = (vec![0.0; k], vec![0.0; k]);

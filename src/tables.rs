@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::arena::Arena;
-use crate::bound::bounds;
+use crate::bound::{bounds, bounds_with};
 use crate::num::{zeros, Num};
 use crate::state::{Engine, StepError, Stop};
 use crate::tree::Tree;
@@ -128,6 +128,10 @@ pub struct ChoiceState<'a, N: Num> {
     pub upper: Box<[N]>,
     /// `L_s`, from Definition 12.
     pub lower: Box<[N]>,
+    /// The two bounds with the loops unbounded, `U^inf_s` and `L^inf_s`:
+    /// the same vectors as `upper` and `lower` when the process has no loop.
+    pub upper_inf: Box<[N]>,
+    pub lower_inf: Box<[N]>,
     low: OnceLock<&'a [Extension<'a, N>]>,
     high: OnceLock<&'a [Extension<'a, N>]>,
 }
@@ -172,6 +176,8 @@ pub struct Expansion<'a, N: Num> {
     pub open_l_delta: Box<[N]>,
     /// What every child, open or final, adds to the gap of the frontier.
     pub gap_delta: Box<[N]>,
+    /// What the open children add to the shift of the bounds.
+    pub open_d_delta: Box<[N]>,
     /// How many children are already final. They leave no trace in the frontier
     /// beyond their contribution to the closed part, so a frontier that wants to
     /// say how many histories it holds has to be told their number here.
@@ -203,6 +209,12 @@ pub struct History<'a, N: Num> {
     /// the unbounded process would still pay, from below and from above, in
     /// the passes the loops along the path were denied.
     pub g_hat: Box<[N]>,
+    /// `P_dh * (L^inf_cs - L_cs)` then `P_dh * (U^inf_cs - U_cs)`, `2k`
+    /// values: what the bounds of the state still to run would gain with the
+    /// loops unbounded, counted for the open histories of a frontier so that
+    /// the gap of a frontier accepted before it closed covers the forced
+    /// exits its completions have still to meet.
+    pub d_hat: Box<[N]>,
     low: OnceLock<&'a Expansion<'a, N>>,
     high: OnceLock<&'a Expansion<'a, N>>,
 }
@@ -263,6 +275,9 @@ pub struct Store<'a, N: Num> {
     cs_shards: Box<[Mutex<HashMap<Box<[i8]>, &'a ChoiceState<'a, N>, FxBuild>>]>,
     hist_shards: Box<[Mutex<HashMap<Box<[u32]>, &'a History<'a, N>, FxBuild>>]>,
     next_id: AtomicU64,
+    /// Whether the process has a loop: without one the unbounded bounds are
+    /// the bounds and are not computed twice.
+    has_loops: bool,
     pub cs_made: AtomicUsize,
     pub hist_made: AtomicUsize,
     pub macro_steps: AtomicUsize,
@@ -279,6 +294,7 @@ impl<'a, N: Num> Store<'a, N> {
             cs_shards: (0..shards).map(|_| Mutex::new(HashMap::default())).collect(),
             hist_shards: (0..shards).map(|_| Mutex::new(HashMap::default())).collect(),
             next_id: AtomicU64::new(1),
+            has_loops: !tree.loops().is_empty(),
             cs_made: AtomicUsize::new(0),
             hist_made: AtomicUsize::new(0),
             macro_steps: AtomicUsize::new(0),
@@ -300,11 +316,19 @@ impl<'a, N: Num> Store<'a, N> {
         // and holding a shard while it runs would stall every other key that
         // hashes there.
         let b = bounds::<N>(self.tree, &state);
+        let (upper_inf, lower_inf) = if self.has_loops {
+            let i = bounds_with::<N>(self.tree, &state, None);
+            (i.upper, i.lower)
+        } else {
+            (b.upper.clone(), b.lower.clone())
+        };
         let record = ChoiceState {
             state: state.clone().into_boxed_slice(),
             stop,
             upper: b.upper.into_boxed_slice(),
             lower: b.lower.into_boxed_slice(),
+            upper_inf: upper_inf.into_boxed_slice(),
+            lower_inf: lower_inf.into_boxed_slice(),
             low: OnceLock::new(),
             high: OnceLock::new(),
         };
@@ -377,6 +401,13 @@ impl<'a, N: Num> Store<'a, N> {
             l_hat.push(impact[c].add(&cs.lower[c]).scale(&prob));
         }
         let g_hat: Vec<N> = gap.iter().map(|g| g.scale(&prob)).collect();
+        let mut d_hat: Vec<N> = Vec::with_capacity(2 * k);
+        for c in 0..k {
+            d_hat.push(cs.lower_inf[c].sub(&cs.lower[c]).scale(&prob));
+        }
+        for c in 0..k {
+            d_hat.push(cs.upper_inf[c].sub(&cs.upper[c]).scale(&prob));
+        }
         let record = History {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             dh: dh.clone().into_boxed_slice(),
@@ -387,6 +418,7 @@ impl<'a, N: Num> Store<'a, N> {
             e_hat: e_hat.into_boxed_slice(),
             l_hat: l_hat.into_boxed_slice(),
             g_hat: g_hat.into_boxed_slice(),
+            d_hat: d_hat.into_boxed_slice(),
             low: OnceLock::new(),
             high: OnceLock::new(),
         };
@@ -423,6 +455,7 @@ impl<'a, N: Num> Store<'a, N> {
         let mut open_e_delta = zeros::<N>(k);
         let mut open_l_delta = zeros::<N>(k);
         let mut gap_delta = zeros::<N>(2 * k);
+        let mut open_d_delta = zeros::<N>(2 * k);
         for ext in exts.iter() {
             let mut dh = Vec::with_capacity(elected.dh.len() + ext.decisions.len());
             dh.extend_from_slice(&elected.dh);
@@ -443,6 +476,9 @@ impl<'a, N: Num> Store<'a, N> {
                     open_e_delta[c] = open_e_delta[c].add(&h.e_hat[c]);
                     open_l_delta[c] = open_l_delta[c].add(&h.l_hat[c]);
                 }
+                for c in 0..2 * k {
+                    open_d_delta[c] = open_d_delta[c].add(&h.d_hat[c]);
+                }
                 open_children.push(h);
             } else {
                 for c in 0..k {
@@ -457,6 +493,7 @@ impl<'a, N: Num> Store<'a, N> {
             open_e_delta: open_e_delta.into_boxed_slice(),
             open_l_delta: open_l_delta.into_boxed_slice(),
             gap_delta: gap_delta.into_boxed_slice(),
+            open_d_delta: open_d_delta.into_boxed_slice(),
         };
         let placed = self.records.expansions.alloc(built);
         Ok(cell.get_or_init(|| placed))

@@ -42,11 +42,18 @@ pub struct Bounds<N: Num> {
     pub lower: Vec<N>,
 }
 
-/// Computes `U_s` and `L_s` at the root of the tree.
+/// Computes `U_s` and `L_s` at the root of the tree, the loops bounded as
+/// the instance says.
 pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
+    bounds_with(tree, s, tree.max_iter)
+}
+
+/// The same with the bound on the passes given, `None` for the unbounded
+/// process.
+pub fn bounds_with<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>) -> Bounds<N> {
     let k = tree.k;
     let mut stack: Vec<N> = Vec::with_capacity(8 * k);
-    rec(tree, s, tree.root, &mut stack, tree.max_iter);
+    rec(tree, s, tree.root, &mut stack, max_iter);
     debug_assert_eq!(stack.len(), 2 * k);
     let lower = stack.split_off(k);
     Bounds {

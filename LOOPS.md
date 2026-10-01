@@ -94,6 +94,33 @@ per point as `continued`, lower and upper. For the time the lower bound is
 taken as zero when the loop sits under a parallel node, the passes of one
 branch not lengthening the whole run for certain.
 
+For a frontier accepted before it closed, an apex, the gap also counts, for
+every open history, the shift of the bounds of its state from the truncated
+to the unbounded recursion, `P(h) · [L∞_s - L_s, U∞_s - U_s]`: the forced
+exits the completions of the partial strategy have still to meet. So the
+bounds of a frontier with the loops unbounded are its two sums plus
+`continued`, whether the frontier is closed or not, and the gap of a point
+does not depend on where the accept fired.
+
+## Limits
+
+- The count of a loop sits in the byte of its node: `--max-iter` takes at
+  most 127, and the page at most 50.
+- A macro step enumerates every path between two choice states. Loops
+  nested over nature nodes with no choice between them multiply those paths,
+  `14 + 14² + 14³` for three loops at three passes over one nature node, and
+  the cap of four million outcomes is reached with two tasks: such a process
+  is not searched, and the limit is reported as `TooManyOutcomes`.
+- The exploration of the frontier meets the strategies in the order of its
+  selection, and a loop multiplies the histories of a strategy, `2954` at
+  three passes where two passes give `12` on one instance of seven tasks;
+  the one-phase search then records many complete strategies before the
+  pruning bites and can run past its limit on an instance whose frontier is
+  one point. This is the search of the parent, not the semantics.
+- Storm, on the model of `to_prism`, ranges over positional pure schedulers
+  that keep no past of a loop, a subclass of the policies of the engine: it
+  may return a subset of the frontier, never a point outside it.
+
 ## The command line and the page
 
 `--max-iter K` on every command that reads an instance, default 3; `inf` on

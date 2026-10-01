@@ -228,20 +228,27 @@ impl<'a, N: Num> Frontier<'a, N> {
         }
     }
 
-    /// The gap of the frontier, `2k` values: the sum over every history,
-    /// open or final, of `P(h) G(h)`.
+    /// What the loops would still pay past the bound on their passes, `2k`
+    /// values, lower then upper: the sum over every history, open or final,
+    /// of `P(h) G(h)`, the forced exits met, plus the sum over the open
+    /// histories of `P(h) (X^inf - X)` at their states, the forced exits
+    /// their completions have still to meet; the bounds of the frontier with
+    /// the loops unbounded are the two sums of the frontier plus this.
     fn continued(&self, k: usize) -> Vec<N> {
-        self.sums[3 * k..5 * k].to_vec()
+        (0..2 * k).map(|c| self.sums[3 * k + c].add(&self.sums[5 * k + c])).collect()
     }
 
     fn from_histories(k: usize, histories: &[&'a History<'a, N>]) -> Frontier<'a, N> {
-        let mut sums = zeros::<N>(5 * k);
+        let mut sums = zeros::<N>(7 * k);
         let mut open = Vec::new();
         for h in histories {
             for c in 0..2 * k {
                 sums[3 * k + c] = sums[3 * k + c].add(&h.g_hat[c]);
             }
             if h.is_open() {
+                for c in 0..2 * k {
+                    sums[5 * k + c] = sums[5 * k + c].add(&h.d_hat[c]);
+                }
                 for c in 0..k {
                     sums[k + c] = sums[k + c].add(&h.e_hat[c]);
                     sums[2 * k + c] = sums[2 * k + c].add(&h.l_hat[c]);
@@ -255,6 +262,9 @@ impl<'a, N: Num> Frontier<'a, N> {
         }
         if open.is_empty() {
             for c in k..3 * k {
+                sums[c] = N::zero();
+            }
+            for c in 5 * k..7 * k {
                 sums[c] = N::zero();
             }
         }
@@ -282,9 +292,13 @@ impl<'a, N: Num> Frontier<'a, N> {
         }
         for c in 0..2 * k {
             sums[3 * k + c] = sums[3 * k + c].add(&exp.gap_delta[c].sub(&elected.g_hat[c]));
+            sums[5 * k + c] = sums[5 * k + c].add(&exp.open_d_delta[c].sub(&elected.d_hat[c]));
         }
         if open.is_empty() {
             for c in k..3 * k {
+                sums[c] = N::zero();
+            }
+            for c in 5 * k..7 * k {
                 sums[c] = N::zero();
             }
         }

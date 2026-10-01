@@ -737,7 +737,7 @@ $('f').addEventListener('submit', async (e) => {
     const d = await r.json();
     if (d.error) { $('out').innerHTML = '<div class="err"></div>';
                    $('out').firstChild.textContent = d.error; }
-    else { d.max_iter = maxIter; LAST = d; render(d); }
+    else { if (d.max_iter === undefined) d.max_iter = maxIter; LAST = d; render(d); }
   } catch (err) {
     $('out').innerHTML = '<div class="err"></div>';
     $('out').firstChild.textContent = String(err);
