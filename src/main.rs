@@ -871,6 +871,7 @@ impl SearchOptions {
             certificate: false,
             window: None,
             cancel: None,
+            publish_open: false,
             steal: self.steal,
             epsilon: self.epsilon,
             workers: self.workers,
