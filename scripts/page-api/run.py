@@ -827,6 +827,8 @@ def section_frontier(L, c, args, work, store):
     ]:
         d_ = c.post("/api/frontier", f)
         L.check(f"frontier refuses {label}", isinstance(d_.get("error"), str) and "points" not in d_, describe("/api/frontier", f), d_)
+    d_ = c.post("/api/frontier", dict(base, window=",1000;"))
+    L.check("frontier refuses a window of two components for three, by position", isinstance(d_.get("error"), str) and "components" in d_["error"], describe("/api/frontier", dict(base, window=",1000;")), d_)
     for label, f in [
         ("workers=0", dict(base, workers="0")),
         ("workers=abc", dict(base, workers="abc")),
@@ -834,7 +836,7 @@ def section_frontier(L, c, args, work, store):
         ("limit=0.01", dict(base, limit="0.01")),
         ("limit=99999", dict(base, limit="99999")),
         ("a bad window", dict(base, window="abc;;")),
-        ("a window of two components for three", dict(base, window=",1000;")),
+        ("a window by name, one component of three", dict(base, window="euro=,1000")),
         ("maximize with spaces", dict(base, maximize=" euro , hours ")),
     ]:
         d_ = c.post("/api/frontier", f)
