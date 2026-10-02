@@ -648,8 +648,8 @@ def step_live(S, page, ctx):
     wait_js(page, "() => document.getElementById('proc').value === ''")
     before = set_text(page, chain_text(4, 4))
     wait_diagram(page, before=before)
-    page.select_option("#workers", str(args.workers))
-    page.fill("#limit", str(args.live_seconds))
+    reveal(page, "#workers"); page.select_option("#workers", str(args.workers))
+    reveal(page, "#limit"); page.fill("#limit", str(args.live_seconds))
     page.click("#go")
     page.wait_for_selector("#out .livebar #pause", timeout=10000)
     page.wait_for_selector("#out .cards", timeout=10000)
@@ -772,7 +772,7 @@ def step_filters(S, page, ctx):
     # a window computed: the search with the bounds of a point finds it and nothing worse
     page.click("#out tbody tr:first-child")
     page.click("#tobounds")
-    page.fill("#limit", "10")
+    reveal(page, "#limit"); page.fill("#limit", "10")
     r = compute(page, 40000)
     S.check("a search within the bounds of a point answers", r["n"] >= 1, f"{r}")
     inside = page.evaluate("() => LAST.window && LAST.points.every(p => p.approx.every((v, j) => +v >= LAST.window[j][0] - 1e-9 && +v <= LAST.window[j][1] + 1e-9))")
@@ -794,7 +794,7 @@ def step_directions(S, page, ctx):
     labels = page.evaluate("() => [...document.querySelectorAll('#window .rname span:first-child')].map(s => s.textContent)")
     S.check("the arrow on the label of the window changes", "euro ↑" in labels and "time ↓" in labels, f"{labels}")
     S.shot("direction-max-euro")
-    page.fill("#limit", "10")
+    reveal(page, "#limit"); page.fill("#limit", "10")
     r = compute(page, 30000)
     S.check("the answer names euro as maximized", r["maximized"] == [False, True, False], f"{r['maximized']}")
     svgs = page.evaluate("() => document.querySelectorAll('#out .plotrow svg').length")
@@ -830,7 +830,7 @@ def step_paging(S, page, ctx):
     wait_js(page, "() => document.getElementById('proc').value === ''")
     before = set_text(page, text)
     wait_diagram(page, 15000, before=before)
-    page.fill("#limit", "15")
+    reveal(page, "#limit"); page.fill("#limit", "15")
     r = compute(page, 40000)
     n = r["n"]
     if n <= 100:
@@ -896,8 +896,8 @@ def step_loops(S, page, ctx):
     wait_js(page, "() => !document.getElementById('maxiter').disabled")
     S.check("Max iterations is enabled with a loop", True)
     S.check("the diagram draws the loop", page.evaluate("() => document.querySelector('#diagram svg').outerHTML.includes('0.5')"))
-    page.fill("#maxiter", "2")
-    page.dispatch_event("#maxiter", "change")
+    reveal(page, "#maxiter"); page.fill("#maxiter", "2")
+    reveal(page, "#maxiter"); page.dispatch_event("#maxiter", "change")
     time.sleep(0.5)
     r = compute(page, 30000)
     heads = page.evaluate("() => [...document.querySelectorAll('#out thead th')].map(t => t.textContent)")
@@ -910,8 +910,8 @@ def step_loops(S, page, ctx):
     S.check("the continued interval is ordered, low at most up", cont and all(float(l) <= float(u) for l, u in zip(cont["low"], cont["up"])), f"{cont}")
     S.shot("loops")
     # max iterations 1 pays less and continues more
-    page.fill("#maxiter", "1")
-    page.dispatch_event("#maxiter", "change")
+    reveal(page, "#maxiter"); page.fill("#maxiter", "1")
+    reveal(page, "#maxiter"); page.dispatch_event("#maxiter", "change")
     time.sleep(0.5)
     v2 = page.evaluate("() => LAST.points.map(p => p.approx.map(Number))")
     r1 = compute(page, 30000)
@@ -949,7 +949,7 @@ def step_narrow(S, page, ctx):
     # with the three-component answer of the chain, the widest plot
     before = set_text(page, chain_text(2, 2))
     wait_diagram(page, before=before)
-    page.fill("#limit", "10")
+    reveal(page, "#limit"); page.fill("#limit", "10")
     r = compute(page, 30000)
     time.sleep(0.3)
     sw, cw = page.evaluate("() => [document.scrollingElement.scrollWidth, document.scrollingElement.clientWidth]")
@@ -982,7 +982,7 @@ def step_more(S, page, ctx):
     wait_js(page, "() => document.getElementById('proc').value === ''")
     before = set_text(page, chain_text(4, 4))
     wait_diagram(page, before=before)
-    page.fill("#limit", "8")
+    reveal(page, "#limit"); page.fill("#limit", "8")
     page.click("#go")
     page.wait_for_selector("#out .livebar #pause", timeout=10000)
     page.click("#pause")
@@ -1001,7 +1001,7 @@ def step_more(S, page, ctx):
     # a search while one runs: the button is disabled, and Enter in a field
     # the button stays live while a search runs, and a search started then
     # cuts the one before: the id of the live search changes
-    page.fill("#limit", "10")
+    reveal(page, "#limit"); page.fill("#limit", "10")
     page.click("#go")
     page.wait_for_selector("#out .livebar #pause", timeout=10000)
     first = page.evaluate("() => LIVE.id")
@@ -1089,10 +1089,10 @@ def step_more(S, page, ctx):
     else:
         S.skip("another mode of the benchmark", "no benchmark or one mode")
     # the limits of the fields: a limit above the cap and a bad max iterations are clamped, not refused
-    page.fill("#limit", "9999")
+    reveal(page, "#limit"); page.fill("#limit", "9999")
     r = compute(page, 30000)
     S.check("a time limit above the cap is clamped and the search answers", r["n"] >= 1, f"{r}")
-    page.fill("#limit", "10")
+    reveal(page, "#limit"); page.fill("#limit", "10")
 
 
 if __name__ == "__main__":
