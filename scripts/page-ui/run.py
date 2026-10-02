@@ -344,8 +344,16 @@ def svg_html(page):
     return page.evaluate("() => { const s = document.querySelector('#diagram svg'); return s ? s.outerHTML : ''; }")
 
 
+def reveal(page, selector):
+    """The group of the form holding the element opened, so that it can be
+    clicked: the form is in groups since 2026-10-02, the Process one open
+    at the start and the others closed."""
+    page.evaluate("(sel) => { const el = document.querySelector(sel); const g = el && el.closest('details.group'); if (g) g.open = true; }", selector)
+
+
 def switch(page, id_):
     """A switch of the page is a hidden checkbox under a label."""
+    reveal(page, f"label[for={id_}]")
     page.click(f"label[for={id_}]")
 
 
@@ -487,7 +495,7 @@ def step_bench(S, page, ctx):
     if not ctx["hello"]["bench"]:
         S.skip("the benchmark panel", "the server has no benchmark folder (--bench)")
         return
-    page.click("#bench summary")
+    reveal(page, "#bench summary"); page.click("#bench summary")
     page.select_option("#b-n", "3")
     page.select_option("#b-i", "4")
     page.select_option("#b-k", "5")
@@ -520,7 +528,7 @@ def step_bench(S, page, ctx):
     switch(page, "regen")
     wait_diagram(page, 15000)
     S.shot("bench-loaded")
-    page.click("#bench summary")
+    reveal(page, "#bench summary"); page.click("#bench summary")
 
 
 def step_saving(S, page, ctx):
@@ -543,7 +551,7 @@ def step_saving(S, page, ctx):
     page.click("#save")
     wait_js(page, "() => document.getElementById('savenote').textContent.startsWith('Saved as')")
     S.check("the pill says saved after Save", text_of(page, "#pstate") == "saved", f"pill {text_of(page, '#pstate')!r}")
-    page.click("#savedpanel summary")
+    reveal(page, "#savedpanel summary"); page.click("#savedpanel summary")
     wait_js(page, "() => document.querySelector('#savedbox a[data-name=\"alpha\"]')")
     S.check("the saved list shows the process", True)
     S.shot("saved-alpha")
@@ -577,7 +585,7 @@ def step_saving(S, page, ctx):
             page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)") == ["Z"])
     S.shot("reference-collapsed")
     # expanded from the panel
-    page.click("#subpanel summary")
+    reveal(page, "#subpanel summary"); page.click("#subpanel summary")
     page.click("#subbox button.tg")
     wait_js(page, "() => document.querySelector('#diagram svg g.sub.expanded')")
     names = page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)")
@@ -598,7 +606,7 @@ def step_saving(S, page, ctx):
     S.check("the toggle on the box expands it again", True)
     page.click("#subclose")
     wait_js(page, "() => document.querySelector('#diagram svg g.sub.collapsed')")
-    page.click("#subopen")
+    reveal(page, "#subopen"); page.click("#subopen")
     wait_js(page, "() => document.querySelector('#diagram svg g.sub.expanded')")
     S.check("Collapse all and Expand all work", True)
     # saved as beta, then alpha made to refer to beta: a cycle
@@ -629,7 +637,7 @@ def step_saving(S, page, ctx):
     page.click("#savedbox li.ask button.yes")
     wait_js(page, "() => document.getElementById('savenote').textContent.startsWith('not deleted')")
     S.check("deleting a process another refers to is refused", "referred to by beta" in text_of(page, "#savenote"))
-    page.click("#savedpanel summary")
+    reveal(page, "#savedpanel summary"); page.click("#savedpanel summary")
 
 
 def step_live(S, page, ctx):
@@ -1011,7 +1019,7 @@ def step_more(S, page, ctx):
         S.skip("the server log", "no --work folder")
     S.shot("search-over-search")
     # the frontier shown leaves when a saved process is loaded
-    page.click("#savedpanel summary")
+    reveal(page, "#savedpanel summary"); page.click("#savedpanel summary")
     page.click("#savedbox a[data-name='alpha']")
     wait_js(page, "() => document.getElementById('savenote').textContent === 'Loaded alpha.'")
     S.check("loading a process clears the frontier of the text before", "The process changed" in (text_of(page, "#out") or ""))
@@ -1061,11 +1069,11 @@ def step_more(S, page, ctx):
     wait_js(page, "() => document.getElementById('savenote').textContent.startsWith('not deleted')")
     S.check("a quoted name referred to cannot be deleted", "referred to by alpha" in text_of(page, "#savenote"))
     S.shot("deleted")
-    page.click("#savedpanel summary")
+    reveal(page, "#savedpanel summary"); page.click("#savedpanel summary")
     # another mode of the benchmark, regenerated
     if ctx["hello"]["bench"] and len(ctx["hello"]["modes"]) > 1:
         mode = ctx["hello"]["modes"][1]
-        page.click("#bench summary")
+        reveal(page, "#bench summary"); page.click("#bench summary")
         page.select_option("#b-m", mode)
         if not checked(page, "regen"):
             switch(page, "regen")
@@ -1077,7 +1085,7 @@ def step_more(S, page, ctx):
         r = compute(page, 30000)
         S.check(f"the regenerated {mode} instance answers", r["n"] >= 1 and r["status"] in ("complete", "cut at the limit"), f"{r}")
         switch(page, "regen")
-        page.click("#bench summary")
+        reveal(page, "#bench summary"); page.click("#bench summary")
     else:
         S.skip("another mode of the benchmark", "no benchmark or one mode")
     # the limits of the fields: a limit above the cap and a bad max iterations are clamped, not refused
