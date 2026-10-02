@@ -330,6 +330,19 @@
       is exact.</div>
   </div>
 
+  <div class="row" style="margin-top:14px">
+    <div>
+      <label for="maxiter">Max iterations</label>
+      <input id="maxiter" type="number" min="1" max="50" step="1" value="1" disabled title="the process has no loop">
+    </div>
+  </div>
+  <div class="hint">The iterations are the passes a loop makes in one activation before its
+    exit is forced, an inner loop making at most that many per pass of the loop above it.
+    A point whose strategy met a forced exit shows, under its expected values, what the
+    loops would still pay if they ran on.</div>
+  </details>
+  <details class="group" id="g-computation">
+    <summary>Computation</summary>
   <div class="row">
     <div>
       <label for="workers">Workers</label>
@@ -353,18 +366,9 @@
       <label for="limit">Time limit, seconds</label>
       <input id="limit" type="number" min="1" max="600" step="1" value="30">
     </div>
-    <div>
-      <label for="maxiter">Max iterations</label>
-      <input id="maxiter" type="number" min="1" max="50" step="1" value="1" disabled title="the process has no loop">
-    </div>
   </div>
   <div class="hint">A search cut at the limit returns the points it had found, which are
     candidates and not yet verified optima.</div>
-  <div class="hint">The iterations are the passes a loop makes in one activation before its
-    exit is forced, an inner loop making at most that many per pass of the loop above it.
-    A point whose strategy met a forced exit shows, under its expected values, what the
-    loops would still pay if they ran on.</div>
-
   </details>
 </form>
 
