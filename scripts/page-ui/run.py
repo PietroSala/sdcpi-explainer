@@ -766,7 +766,7 @@ def step_filters(S, page, ctx):
     exact = page.evaluate("() => WNAMES.every((n, i) => { const R = WINDOW[n], p = LAST.points[0]; return R.flat || +p.approx[i] >= R.b || windowField().includes(p.value[i]); })")
     S.check("the window sent carries the exact values of the point", bool(exact) and sent.replace(";", "").replace(",", "") != "", f"window {sent!r}")
     S.shot("use-as-bounds")
-    page.click("#wreset")
+    reveal(page, "#wreset"); page.click("#wreset")
     after_reset = page.evaluate("() => [...document.querySelectorAll('#window .rng .fill')].map(f => f.style.width)")
     S.check("the Reset of the window restores the bounds", all(w == "100%" for w in after_reset) and page.evaluate("() => windowField()").replace(";", "").replace(",", "") == "", f"{after_reset}")
     # a window computed: the search with the bounds of a point finds it and nothing worse
@@ -778,7 +778,7 @@ def step_filters(S, page, ctx):
     inside = page.evaluate("() => LAST.window && LAST.points.every(p => p.approx.every((v, j) => +v >= LAST.window[j][0] - 1e-9 && +v <= LAST.window[j][1] + 1e-9))")
     S.check("every point of the answer lies within the window", bool(inside), f"window {page.evaluate('() => LAST.window')}")
     S.shot("within-bounds")
-    page.click("#wreset")
+    reveal(page, "#wreset"); page.click("#wreset")
 
 
 def step_directions(S, page, ctx):
