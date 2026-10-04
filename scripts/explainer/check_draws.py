@@ -80,6 +80,11 @@ policies, every history of every policy enumerated:
              passes and counted apart, as an observation: there it fails as
              soon as a loop sits inside a loop, a pass past the bound moving
              the count of every later draw;
+  before     in the process at K + 1 passes, as long as no draw has run a
+             region again after its K-th pass the history is one of the
+             process at K, and the reading of the decision functions is one
+             the policy decided: the explanation is the strategy up to the
+             first draw past the bound, under a parallel node as elsewhere;
   reading    two sequences of draws that one policy meets at the same choice
              are told apart by the policy the proof builds, changed at one
              history, at which both are still met;
@@ -903,9 +908,10 @@ def past_the_bound(t, K, records, policy, cap, counts, fails, label, rng):
                 a = by_passes(t, rec) if nested else by_occurrences(rec)
                 G[(rec["witness"], frozenset(a))] = policy[rec["states"]]
                 known.setdefault(rec["witness"], set()).update(k for k, _ in a)
-        out = {"met": 0, "missing": 0, "inside": 0, "undecided": 0, "kept": F(0), "time": F(0), "nodes": 0}
+        out = {"met": 0, "missing": 0, "inside": 0, "undecided": 0, "kept": F(0), "time": F(0), "nodes": 0,
+               "before": 0, "before missing": 0}
 
-        def walk(s, drw, occ, prob, kept, time):
+        def walk(s, drw, occ, prob, kept, time, past=False):
             out["nodes"] += 1
             if out["nodes"] > 40 * cap:
                 raise OverflowError
@@ -919,25 +925,34 @@ def past_the_bound(t, K, records, policy, cap, counts, fails, label, rng):
                 extra = any(s[1][t.low[l]] >= K for l in above[v])
                 out["inside" if extra else "met"] += 1
                 a = G.get((v, frozenset(e for e in drw if e[0] in known.get(v, ()))))
+                if not past:
+                    # no draw has run a region again past the bound: the
+                    # history is, state by state, one of the process at K
+                    out["before"] += 1
+                    if a is None:
+                        out["before missing"] += 1
                 if a is None:
                     out["undecided" if extra else "missing"] += 1
                     a = t.low[v]
                 (_, pr, nxt, c) = [m for m in mv if m[0] == a][0]
-                walk(nxt, drw, occ, prob * pr, kept, time)
+                walk(nxt, drw, occ, prob * pr, kept, time, past)
             elif r == 4 and len(mv) == 2:
                 o2 = dict(occ); o2[v] = o2.get(v, 0) + 1
                 idx = pass_index(t, s, v) if nested else o2[v]
                 for (_, pr, nxt, c) in mv:
-                    walk(nxt, drw + [((v, idx), entry(t, s, v, nxt)[1])], o2, prob * pr, kept, time)
+                    x = entry(t, s, v, nxt)[1]
+                    # the draw of a loop after its K-th pass that runs the region again
+                    leaves = t.kind[v] == LOOP and s[1][t.low[v]] >= K and x != OUT
+                    walk(nxt, drw + [((v, idx), x)], o2, prob * pr, kept, time, past or leaves)
             elif r == 5:
                 (_, pr, nxt, c) = mv[0]
                 # the tasks this step closes, outside every pass past K
                 closers = [u for u in t.tasks if s[0][u] >= 0 and nxt[0][u] == DONE]
                 paid = sum(t.impact[u] for u in closers if all(s[1][t.low[l]] < K for l in above[u]))
-                walk(nxt, drw, occ, prob * pr, kept + paid, time + c // TIME)
+                walk(nxt, drw, occ, prob * pr, kept + paid, time + c // TIME, past)
             else:
                 (_, pr, nxt, c) = mv[0]
-                walk(nxt, drw, occ, prob * pr, kept, time)
+                walk(nxt, drw, occ, prob * pr, kept, time, past)
 
         walk(initial(t), [], {}, F(1), F(0), F(0))
         return out
@@ -962,6 +977,12 @@ def past_the_bound(t, K, records, policy, cap, counts, fails, label, rng):
 
         b = beyond(True)
         count("beyond")
+        # before: as long as no draw has run a region again past the bound,
+        # the reading is the one of a history the policy decided, under a
+        # parallel node as elsewhere
+        count("before", b["before"])
+        if b["before missing"]:
+            fail("before", f"{b['before missing']} of {b['before']} choices, before any draw past the bound, read draws the policy never decided after ({where})")
         count("observed: choices inside a pass past the bound", b["inside"])
         count("observed: of which no decision is read", b["undecided"])
         departs = b["missing"] or b["kept"] != impact_K or b["time"] < time_K
