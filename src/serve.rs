@@ -462,6 +462,10 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
             let out = bounds_of(&body, bench);
             send(&mut stream, 200, "application/json", &out)
         }
+        ("POST", "/api/explain") => {
+            let out = explain_of(&body, bench);
+            send(&mut stream, 200, "application/json", &out)
+        }
         ("POST", "/api/start") => {
             let out = start(&body, bench);
             send(&mut stream, 200, "application/json", &out)
@@ -651,7 +655,7 @@ fn editing_name(body: &str) -> Option<String> {
 /// and takes the name of the first task of its region, which is the task the
 /// run reaches first when that branch is taken, so that a decision reads as a
 /// sentence about the process and not about the identifiers of its nodes.
-fn name_of(tree: &Tree, id: u32) -> String {
+pub(crate) fn name_of(tree: &Tree, id: u32) -> String {
     if let Some(n) = tree.task_names.get(id as usize) {
         if !n.is_empty() {
             return n.clone();
@@ -1383,6 +1387,43 @@ fn frontier(body: &str, bench: &Bench) -> String {
     let started = Instant::now();
     match pareto::frontier(&prep.tree, options(&prep, None, None)) {
         Ok(report) => frontier_json(&prep, &report, started.elapsed().as_secs_f64()),
+        Err(e) => err(&e),
+    }
+}
+
+/// The explanation of one strategy: the process as the page has it, with
+/// the time and the bound on the passes of the search that found the
+/// strategy, and the decisions of the strategy, `history>action;...`, a
+/// history being its trail, identifiers joined by dots. The answer is one
+/// decision tree per choice node, on the draws alone.
+fn explain_of(body: &str, bench: &Bench) -> String {
+    let prep = match prepare(body, bench) {
+        Ok(p) => p,
+        Err(e) => return err(&e),
+    };
+    let text = field(body, "decisions").unwrap_or_default();
+    let mut decisions: Vec<(Vec<u32>, u32)> = Vec::new();
+    for part in text.split(';').filter(|p| !p.trim().is_empty()) {
+        let Some((h, a)) = part.split_once('>') else {
+            return err("a decision is written history>action");
+        };
+        let mut dh = Vec::new();
+        for x in h.split('.').filter(|x| !x.trim().is_empty()) {
+            match x.trim().parse::<u32>() {
+                Ok(id) if id >= 1 && id <= prep.tree.n_nodes => dh.push(id),
+                _ => return err(&format!("{x:?} is no node of the process")),
+            }
+        }
+        match a.trim().parse::<u32>() {
+            Ok(id) if id >= 1 && id <= prep.tree.n_nodes => decisions.push((dh, id)),
+            _ => return err(&format!("{a:?} is no node of the process")),
+        }
+    }
+    match crate::explain::explain(&prep.tree, &decisions) {
+        Ok(e) => {
+            let node = |id: u32| node_json(&prep.tree, id, &prep.labels);
+            format!("{{\"explanations\": {}}}", crate::explain::render_json(&prep.tree, &e, &node))
+        }
         Err(e) => err(&e),
     }
 }

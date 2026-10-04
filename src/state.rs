@@ -65,6 +65,20 @@ pub enum Stop {
     Choice(u32),
 }
 
+/// One entry of the trail of a history, typed: a decision, or a draw of one
+/// of its three kinds. The draws are what an explanation reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Entry {
+    /// A decision at a choice node: the node and the child it starts.
+    Decision(u32, u32),
+    /// A draw at a nature node: the node and the child drawn.
+    Nature(u32, u32),
+    /// The draw of a loop, below the bound, that runs the region again.
+    Again(u32),
+    /// The draw of a loop, below the bound, that leaves the loop.
+    Out(u32),
+}
+
 pub struct Engine<'t> {
     pub tree: &'t Tree,
     /// A macro step that produces more outcomes than this fails rather than
@@ -400,6 +414,90 @@ impl<'t> Engine<'t> {
             }
         }
         Ok(out)
+    }
+
+    /// The history a trail writes, replayed from the initial state, and the
+    /// choice node that is the move where it ends, `None` at a final state.
+    ///
+    /// A trail, the `dh` of a recorded decision, is a list of identifiers,
+    /// what every decision and every draw started, and it does not say of
+    /// an entry which of the two it is: the identifier of a loop is written
+    /// both by the step that starts the loop as the child of an XOR node and
+    /// by the draw that leaves it. The replay walks the clauses as the macro
+    /// step does, reads one entry at every decision and at every draw taken
+    /// below the bound, none at a forced exit, and returns the entries
+    /// typed. It stops when the trail is spent and a choice is the move, or
+    /// at a final state.
+    pub fn replay(&self, dh: &[u32]) -> Result<(Vec<Entry>, Option<u32>), String> {
+        let t = self.tree;
+        let mut s = self.initial_state();
+        let mut scratch = vec![0.0f64; t.k];
+        let mut entries: Vec<Entry> = Vec::with_capacity(dh.len());
+        let mut at = 0usize;
+        // every turn of the loop applies one clause; a run of the process is
+        // finite, and the bound is there for a trail that is not one
+        let limit = 64 * (t.n_nodes as usize + 1) * (dh.len() + 2) * 128;
+        for _ in 0..limit {
+            match self.rank_witness(&s) {
+                None => {
+                    if at != dh.len() {
+                        return Err(format!("the trail goes on past the end of the run, at entry {at}"));
+                    }
+                    return Ok((entries, None));
+                }
+                Some((1, v)) => {
+                    if at == dh.len() {
+                        return Ok((entries, Some(v)));
+                    }
+                    let n = t.node(v);
+                    let a = dh[at];
+                    if a != n.low && a != n.high {
+                        return Err(format!("entry {at} of the trail, {a}, is no child of the choice {v}"));
+                    }
+                    at += 1;
+                    s[a as usize] = 0;
+                    entries.push(Entry::Decision(v, a));
+                }
+                Some((4, v)) if t.kind(v) == Kind::Loop => {
+                    let n = t.node(v);
+                    let bound = t.max_iter.ok_or("the loops have no bound on their passes")?;
+                    let closed = s[v as usize] as u32 + 1;
+                    if closed < bound {
+                        let x = *dh.get(at).ok_or(format!("the trail ends at the draw of the loop {v}"))?;
+                        at += 1;
+                        if x == n.low {
+                            s[n.low as usize] = 0;
+                            s[v as usize] = closed as i8;
+                            entries.push(Entry::Again(v));
+                        } else if x == v {
+                            s[n.low as usize] = IDLE;
+                            s[v as usize] = DONE;
+                            entries.push(Entry::Out(v));
+                        } else {
+                            return Err(format!("entry {}, {x}, is neither the region nor the exit of the loop {v}", at - 1));
+                        }
+                    } else {
+                        s[n.low as usize] = IDLE;
+                        s[v as usize] = DONE;
+                    }
+                }
+                Some((4, v)) => {
+                    let n = t.node(v);
+                    let x = *dh.get(at).ok_or(format!("the trail ends at the draw of the nature node {v}"))?;
+                    if x != n.low && x != n.high {
+                        return Err(format!("entry {at} of the trail, {x}, is no child of the nature node {v}"));
+                    }
+                    at += 1;
+                    s[x as usize] = 0;
+                    entries.push(Entry::Nature(v, x));
+                }
+                Some((2, v)) => self.down(&mut s, v),
+                Some((3, v)) => self.up(&mut s, v),
+                Some((5, _)) => self.fast_forward(&mut s, &mut scratch),
+                Some((r, _)) => return Err(format!("rank {r} is not a clause")),
+            }
+        }
+        Err("the replay of the trail does not end".to_string())
     }
 
     /// The macro step out of the initial state, which no action precedes: the

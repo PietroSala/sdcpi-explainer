@@ -28,6 +28,10 @@ policies, every history of every policy enumerated:
   assignment without loops every nature node is drawn at most once along
              every history, and the histories at which a choice is due have
              pairwise distinct partial assignments of the nature nodes;
+  occurrences with loops or without, the histories at which a choice is due
+             have pairwise distinct assignments indexed by the occurrences,
+             the j-th draw at a node with what it gave: the reading the
+             trees of the tool test;
   reading    two sequences of draws that one policy meets at the same choice
              are told apart by the policy the proof builds, changed at one
              history, at which both are still met;
@@ -492,6 +496,19 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
             if d in seen:
                 fail("decides", f"choice {v} due at two histories with the same draws {d}")
             seen[d] = rec
+        # the assignment indexed by the occurrences: the j-th draw at a node
+        # with what it gave, loops or not
+        seen_o = {}
+        for rec in due:
+            occ, key = {}, []
+            for (u, x) in draws(rec):
+                occ[u] = occ.get(u, 0) + 1
+                key.append(((u, occ[u]), x))
+            key = frozenset(key)
+            count("occurrences")
+            if key in seen_o:
+                fail("occurrences", f"choice {v} due at two histories with the same assignment by occurrences {sorted(key, key=str)}")
+            seen_o[key] = rec
         if not t.loops:
             # the partial assignment of the nature nodes
             seen_a = {}

@@ -168,6 +168,16 @@
   .pager { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 6px 0; }
   .pager button { width: auto; margin: 0; padding: 2px 9px; font-size: 12px; }
   .pager[hidden] { display: none; }
+  /* the explanation of a strategy: one tree per choice, a test with its
+     answers indented under it */
+  .xchoice { margin: 10px 0 4px; font-weight: 600; }
+  .xchoice span { font-weight: 400; color: var(--muted); }
+  .xtest { margin: 3px 0 3px 4px; padding-left: 10px; border-left: 2px solid var(--line); }
+  .xq { font-size: 12.5px; color: var(--ink); }
+  .xbr { margin: 2px 0 2px 8px; }
+  .xval { color: var(--muted); }
+  .xleaf { font-weight: 600; }
+  #sview { margin: 0 0 8px; }
   /* the parallel coordinates split by direction */
   .pcs { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
   .plotrow > .pcs { flex: none; }
@@ -1444,10 +1454,75 @@ function select(i, reveal = true) {
     : '';
   $('str').innerHTML = `<h3>Strategy of point ${i + 1} <button type="button" id="tobounds" class="small ghost"
       title="the values of this point bound the next search: at most on a minimized component, at least on a maximized one">Use as bounds</button></h3>`
-    + `<div style="margin-bottom:7px">expected: ${values}</div>` + cont + lines;
+    + `<div style="margin-bottom:7px">expected: ${values}</div>` + cont
+    + `<div class="seg" id="sview" role="radiogroup" aria-label="how the strategy is shown">`
+    + `<button type="button" data-v="decisions" role="radio">Decisions</button>`
+    + `<button type="button" data-v="explanation" role="radio">Explanation</button></div>`
+    + lines + '<div id="sexpl" hidden></div>';
   $('tobounds').addEventListener('click', () => pointToWindow(p));
+  $('sview').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    SVIEW = b.dataset.v;
+    paintStrategyView(p);
+  }));
   SPAGE_IDX = 0;
   paintStrategyLines(p);
+  paintStrategyView(p);
+}
+
+// The strategy of a point is shown as its decisions, history by history,
+// or as its explanation: for every choice node one decision tree on the
+// draws of nature alone, the strategy deciding by them and by nothing
+// else. The view chosen stays through the points.
+let SVIEW = 'decisions';
+function paintStrategyView(p) {
+  const expl = SVIEW === 'explanation';
+  $('sview').querySelectorAll('button').forEach(b => {
+    const on = b.dataset.v === SVIEW;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on);
+  });
+  $('slines').hidden = expl;
+  $('sexpl').hidden = !expl;
+  if (expl) paintExplanation(p);
+}
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+function explNode(n) {
+  if (n.take) return `<span class="xleaf">take ${label(n.take)}</span>`;
+  // a nature node is named by its two children, a loop by its region
+  const q = n.loop ? `the ${ordinal(n.occurrence)} draw of the loop over ${label(n.options[0])} ${label(n.draw)}`
+                   : `the ${ordinal(n.occurrence)} draw between ${label(n.options[0])} and ${label(n.options[1])} ${label(n.draw)}`;
+  const answer = (v) => v.is === 'child' ? `took ${label(v.child)}`
+                      : v.is === 'again' ? 'ran again' : v.is === 'out' ? 'was left' : 'not drawn';
+  return `<div class="xtest"><div class="xq">${q}</div>`
+    + n.branches.map(b => `<div class="xbr"><span class="xval">${answer(b.value)}:</span> ${explNode(b.tree)}</div>`).join('')
+    + `</div>`;
+}
+async function paintExplanation(p) {
+  const box = $('sexpl');
+  if (!box) return;
+  if (!p.steps.length) { box.innerHTML = '<p class="status">No choice of the controller is decided on this branch.</p>'; return; }
+  if (!p._expl) {
+    box.innerHTML = '<p class="status">Explaining\u2026</p>';
+    const body = new URLSearchParams({
+      process: $('proc').value, name: DOC.name || '',
+      time: LAST.time ? '1' : '0',
+      max_iter: LAST.max_iter === undefined ? '1' : String(LAST.max_iter),
+      decisions: p.steps.map(st => st.after.map(n => n.id).join('.') + '>' + st.take.id).join(';'),
+    });
+    try {
+      const r = await fetch('/api/explain', { method: 'POST', body });
+      p._expl = await r.json();
+    } catch (err) { p._expl = { error: String(err) }; }
+    if (LAST.points[SELECTED] !== p) return;   // another point was chosen meanwhile
+  }
+  const d = p._expl;
+  if (d.error) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = d.error; return; }
+  box.innerHTML = d.explanations.map(e =>
+    `<div class="xchoice">The choice between ${label(e.options[0])} and ${label(e.options[1])} ${label(e.choice)} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
+    + `${e.tests} ${e.tests === 1 ? 'test' : 'tests'}${e.minimal ? '' : ', not known to be the fewest'}</span></div>`
+    + explNode(e.tree)).join('')
+    + `<div class="hint" style="margin-top:8px">Each tree reads the draws of nature alone, the j-th draw at a node with
+       what it gave: the strategy decides by these, its own earlier decisions being determined by them.</div>`;
 }
 
 // The decisions of the strategy, SPAGE at a time, with a pager when there

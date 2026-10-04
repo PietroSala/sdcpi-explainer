@@ -1,6 +1,7 @@
 //! `sdcpi`: strategy determination for BPMN+CPI processes.
 //!
 //!     sdcpi determine <instance> (--B a,b,... | --B-file F) [options]
+//!     sdcpi explain   <instance> (--B a,b,... | --B-file F) [--explain-json F] [options]
 //!     sdcpi info      <instance>
 //!     sdcpi bound     <instance>
 //!     sdcpi optima    <instance>
@@ -12,6 +13,7 @@ mod arena;
 mod parse;
 mod bound;
 mod exact;
+mod explain;
 mod num;
 mod pareto;
 mod search;
@@ -42,6 +44,7 @@ fn main() {
         "info" => cmd_info(&args[1..]),
         "optima" => cmd_optima(&args[1..]),
         "determine" => cmd_determine(&args[1..]),
+        "explain" => cmd_explain(&args[1..]),
         "pareto" => cmd_pareto(&args[1..]),
         "parse" => cmd_parse(&args[1..]),
         "to_prism" => cmd_to_prism(&args[1..]),
@@ -67,6 +70,7 @@ const USAGE: &str = "\
 sdcpi  on-the-fly strategy synthesis for BPMN+CPI processes
 
   sdcpi determine <instance> (--B a,b,... | --B-file F) [options]
+  sdcpi explain   <instance> (--B a,b,... | --B-file F) [--explain-json F] [options]
   sdcpi pareto    <instance> [--precision E] [--obdd-library L] [options]
   sdcpi parse     (<process> | --file F) [--saved F] [--out F]
   sdcpi to_prism  <instance> [--encode-history true|false] [--out F]
@@ -137,6 +141,18 @@ options for to_objective
   written to standard output, or to --out F. With --pareto true no budget is
   read and the property asks for the frontier instead, one
   R{\"impactj\"}min=? [ F n<root>=-2 ] term per component
+
+options for explain
+  explain is determine with the strategy it finds explained: for every
+  choice node the strategy decides, a decision tree on the draws of nature
+  alone, the j-th draw at a nature node with the child it took, the j-th
+  draw of a loop with whether the region ran again or the loop was left, or
+  that the draw was not taken before the choice. The strategy decides by
+  these and by nothing else, its own earlier decisions being determined by
+  the draws. The tree has the fewest tests, found by an exact search within
+  a budget, and says so when it is not known to; --explain-json F writes the
+  trees as JSON. On determine, --explain 1 does the same, and on pareto it
+  explains the strategy of every point, in the report and in the JSON.
 
 options for determine
   --B a,b,...           the budget B, one value per component, or the named
@@ -252,7 +268,7 @@ pub(crate) struct Args {
 
 /// Every option some command takes: an option outside this list is a
 /// mistake, refused with its name, never ignored in silence.
-const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
+const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "explain", "explain-json", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
 
 pub(crate) fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut out = Args {
@@ -966,10 +982,13 @@ fn cmd_determine(args: &[String]) -> i32 {
     };
     let print_strategy = args.flag("print-strategy").is_some();
     let print_size = args.flag("print-size").is_some();
+    // the strategy explained, as decision trees on the draws
+    let explain = args.flag("explain").is_some() || args.flag("explain-json").is_some();
+    let explain_json = args.flag("explain-json");
     match args.flag("arith") {
         None | Some("f64") => {
             let threshold: Vec<f64> = budget.iter().map(|b| b.value).collect();
-            run_determine(&tree, threshold, &opts, print_size, print_strategy, false)
+            run_determine(&tree, threshold, &opts, print_size, print_strategy, false, explain, explain_json)
         }
         Some("exact") => {
             let mut threshold: Vec<Exact> = Vec::with_capacity(budget.len());
@@ -979,7 +998,7 @@ fn cmd_determine(args: &[String]) -> i32 {
                     None => return fail(&format!("`{}` in B is not a decimal", b.text)),
                 }
             }
-            run_determine(&tree, threshold, &opts, print_size, print_strategy, true)
+            run_determine(&tree, threshold, &opts, print_size, print_strategy, true, explain, explain_json)
         }
         Some(v) => fail(&format!("--arith wants f64 or exact, found {v:?}")),
     }
@@ -992,6 +1011,8 @@ fn run_determine<N: Num>(
     print_size: bool,
     print_strategy: bool,
     exact: bool,
+    explain: bool,
+    explain_json: Option<&str>,
 ) -> i32 {
     // recording costs nothing measurable, 1.7367 s against 1.7363 s on
     // an instance that searches for over a second, and without it the size
@@ -1004,7 +1025,7 @@ fn run_determine<N: Num>(
         .enumerate()
         .map(|(c, v)| if tree.maximized.get(c).copied().unwrap_or(false) { N::zero().sub(&v) } else { v })
         .collect();
-    let cfg = opts.config(threshold.clone(), print_strategy || print_size);
+    let cfg = opts.config(threshold.clone(), print_strategy || print_size || explain);
     let (answer, stats) = search::search(tree, cfg);
 
     let approx: Vec<f64> = shown_b.iter().map(|b| b.to_f64()).collect();
@@ -1083,11 +1104,49 @@ fn run_determine<N: Num>(
                 println!("  after {dh:?} take {action}");
             }
         }
+        if explain {
+            // the strategy as one decision tree per choice node, on the
+            // draws of nature alone
+            match explain::explain(tree, &s.decisions) {
+                Ok(e) => {
+                    let name = |id: u32| serve::name_of(tree, id);
+                    println!(
+                        "explanation    {} {} decided, {} tests in all",
+                        e.len(),
+                        if e.len() == 1 { "choice" } else { "choices" },
+                        e.iter().map(|x| x.tests).sum::<usize>()
+                    );
+                    print!("{}", explain::render_text(tree, &e, &name));
+                    if let Some(path) = explain_json {
+                        let node = |id: u32| {
+                            format!("{{\"id\": {id}, \"name\": \"{}\"}}", name(id).replace('\\', "\\\\").replace('"', "\\\""))
+                        };
+                        let text = explain::render_json(tree, &e, &node);
+                        if let Err(err) = std::fs::write(path, text + "\n") {
+                            eprintln!("sdcpi: {path}: {err}");
+                            return 1;
+                        }
+                    }
+                }
+                Err(err) => println!("explanation    unavailable: {err}"),
+            }
+        }
     }
     match answer {
         Answer::Failed(_) => 1,
         _ => 0,
     }
+}
+
+/// Determine, with the strategy found explained: `explain` is `determine
+/// --explain 1`, so that the answer and its explanation come from one run.
+fn cmd_explain(args: &[String]) -> i32 {
+    let mut a = args.to_vec();
+    if !a.iter().any(|x| x == "--explain" || x.starts_with("--explain=")) {
+        a.push("--explain".to_string());
+        a.push("1".to_string());
+    }
+    cmd_determine(&a)
 }
 
 /// The frontier of the achievable expected impacts, with a strategy per point.
@@ -1221,6 +1280,9 @@ fn cmd_pareto(args: &[String]) -> i32 {
         },
     };
     let print_strategy = args.flag("print-strategy").is_some();
+    // every point with its strategy explained, a decision tree per choice
+    // node on the draws alone
+    let explain_points = args.flag("explain").is_some();
     let started = Instant::now();
     let report = match pareto::frontier(
         &tree,
@@ -1380,6 +1442,17 @@ fn cmd_pareto(args: &[String]) -> i32 {
                         println!("    after {dh:?} take {action}");
                     }
                 }
+                if explain_points {
+                    match explain::explain(&tree, &w.decisions) {
+                        Ok(e) => {
+                            let name = |id: u32| serve::name_of(&tree, id);
+                            for line in explain::render_text(&tree, &e, &name).lines() {
+                                println!("    {line}");
+                            }
+                        }
+                        Err(err) => println!("    explanation unavailable: {err}"),
+                    }
+                }
             }
             None => println!("  witness      none"),
         }
@@ -1391,7 +1464,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
         }
     }
     if let Some(path) = args.flag("json") {
-        let text = json_report(&tree, &report, elapsed, print_strategy);
+        let text = json_report(&tree, &report, elapsed, print_strategy, explain_points);
         if let Err(e) = std::fs::write(path, text) {
             return fail(&format!("{path}: {e}"));
         }
@@ -1405,7 +1478,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
 /// The report of pareto as JSON, written by hand: the crate carries no
 /// serialiser and the shape is small. Rationals are strings, so that nothing
 /// is rounded on the way out.
-fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bool) -> String {
+fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bool, explained: bool) -> String {
     fn esc(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
         out.push('"');
@@ -1527,6 +1600,15 @@ fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bo
                         .map(|(dh, a)| format!("[{}, {a}]", nums(dh)))
                         .collect();
                     o.push_str(&format!(",\n      \"strategy\": [{}]", items.join(", ")));
+                }
+                if explained {
+                    // the strategy of the point as one decision tree per
+                    // choice node, on the draws alone
+                    let node = |id: u32| format!("{{\"id\": {id}, \"name\": {}}}", esc(&serve::name_of(tree, id)));
+                    match explain::explain(tree, &w.decisions) {
+                        Ok(e) => o.push_str(&format!(",\n      \"explanation\": {}", explain::render_json(tree, &e, &node))),
+                        Err(err) => o.push_str(&format!(",\n      \"explanation_error\": {}", esc(&err))),
+                    }
                 }
                 o.push('\n');
             }

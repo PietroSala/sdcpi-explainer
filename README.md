@@ -85,6 +85,49 @@ found and the certificate of the cut. A search started while one runs cuts
 the one before.
 
 
+## Explaining a strategy
+
+This repository is the third of the family, after the tool of the paper and
+the one with loops, and what it adds is the explainer. A strategy is a
+deterministic policy, and at a choice it decides by a function of the draws
+of nature that precede, its own earlier decisions being determined by
+those draws: the section "A strategy as a function of the draws" of
+`parallel-paper/semantics-time.tex`, in the repository of the paper, proves
+it, and `scripts/explainer/check_draws.py` checks every statement of it on
+an independent implementation of the semantics. An explanation therefore
+reads the draws and nothing else.
+
+    sdcpi explain F.yaml --B 7.6,70.8,16.8 --time 1
+    sdcpi pareto  F.yaml --onephase 1 --time 1 --explain 1 --json out.json
+
+For every choice node the strategy decides, the explainer builds a decision
+tree whose tests ask what one draw gave: the `j`-th draw at a nature node
+with the child it took, the `j`-th draw of a loop with whether the region
+ran again or the loop was left, or that the draw was not taken before the
+choice. With loops a node is drawn once per pass, and the occurrence is
+what keeps the passes apart; the histories at which a strategy meets a
+choice always differ in one such value, so a tree exists. The tree
+returned has the fewest tests, and among those the least depth, found by
+an exact search on the sets of histories within a budget of two hundred
+thousand sets; past the budget the search goes on greedily and the
+explanation says that it is not known to be the fewest. On the running
+example, for the strategy that mends and then follows the redo:
+
+    choice 4 (Swap or Mend): 1 history, 0 tests, the fewest
+      take Mend
+    choice 16 (Courier or Counter): 2 histories, 1 test, the fewest
+      the 1st draw at the nature node 8 (Redo or Pass):
+        took Redo: take Counter
+        took Pass: take Courier
+
+`explain` is `determine --explain 1`; `--explain-json F` writes the trees,
+and on `pareto` the option explains the strategy of every point, in the
+report and in the JSON. On the page the strategy of a chosen point has two
+views, its decisions history by history and its explanation, the trees
+drawn with their tests indented; the page asks the server for them at
+`POST /api/explain`, with the process and the decisions of the point. A
+strategy the search left partial is explained on the histories it decides.
+
 ## The model
 
 A process is a YAML file holding a tree, binary but for its loop nodes. The
@@ -375,6 +418,11 @@ companions for exploring an instance.
 sdcpi determine <instance> (--B a,b,... | --B-file F) [options]
                                              is there a strategy whose expected
                                              impact fits the budget, and which one
+
+sdcpi explain   <instance> (--B a,b,... | --B-file F) [--explain-json F] [options]
+                                             determine, with the strategy found
+                                             explained: a decision tree per choice
+                                             node on the draws of nature alone
 
 sdcpi parse     (<process> | --file F) [--out F]
                                              turn a process written in the grammar
