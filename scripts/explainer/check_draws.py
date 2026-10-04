@@ -73,7 +73,8 @@ policies, every history of every policy enumerated:
              policy decided, the impact paid outside those passes is the
              impact of the policy at K, and the time is no less. Under a
              parallel node the reading may depart, and the runs in which it
-             does are counted apart. A choice inside a pass past K is one
+             does are counted apart, with those among them in which the
+             policy has a continuation all the same. A choice inside a pass past K is one
              the policy never meets, and what is read there is counted
              apart. The same is tried with the occurrences in place of the
              passes and counted apart, as an observation: there it fails as
@@ -966,6 +967,10 @@ def past_the_bound(t, K, records, policy, cap, counts, fails, label, rng):
         departs = b["missing"] or b["kept"] != impact_K or b["time"] < time_K
         if departs and under:
             count("observed: the reading by passes departs past the bound, a loop under a parallel node")
+            if not c["none"] and not c["many"]:
+                # the second case of the remark of the note: the policy has
+                # a continuation, and its reading departs from it
+                count("observed: of which the policy has a continuation")
         elif departs:
             fail("beyond", f"no loop under a parallel node: {b['missing']} of {b['met']} choices outside the passes past K read draws "
                            f"the policy never decided after; impact {b['kept']} against {impact_K}, time {b['time']} against {time_K}")
