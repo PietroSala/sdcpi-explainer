@@ -94,6 +94,19 @@ per point as `continued`, lower and upper. For the time the lower bound is
 taken as zero when the loop sits under a parallel node, the passes of one
 branch not lengthening the whole run for certain.
 
+**What the interval is the interval of** (settled 2026-10-04, Proposition
+"Where a policy has a continuation" of the note). "The strategy in the
+unbounded process" is a policy that continues it: one that decides, outside
+the passes past the bound, as the strategy decides in the run within the
+bound, the run of the truncated process with the same entries, each named
+by its node and by the pass of every loop above it. When no loop sits under
+a parallel node every strategy has one, and the interval is its gap. Under
+a parallel node the passes past the bound take time, a choice of the other
+branch may come due before a draw that precedes it in the truncated
+process, and a strategy that reads that draw has no continuation: the
+interval is then the interval of no policy. The tool reports `continued`
+in both cases and does not tell them apart.
+
 For a frontier accepted before it closed, an apex, the gap also counts, for
 every open history, the shift of the bounds of its state from the truncated
 to the unbounded recursion, `P(h) · [L∞_s - L_s, U∞_s - U_s]`: the forced

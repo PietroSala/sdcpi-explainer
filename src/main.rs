@@ -158,7 +158,8 @@ options for explain
   by an exact search within a budget, and says so when it is not known to;
   --explain-json F writes the trees as JSON. On determine, --explain 1 does
   the same, and on pareto it explains the strategy of every point, in the
-  report and in the JSON.
+  report and in the JSON; the explanations are made after the search and
+  outside --time-limit. --explain 0 turns it off.
 
 options for determine
   --B a,b,...           the budget B, one value per component, or the named
@@ -989,7 +990,7 @@ fn cmd_determine(args: &[String]) -> i32 {
     let print_strategy = args.flag("print-strategy").is_some();
     let print_size = args.flag("print-size").is_some();
     // the strategy explained, as decision trees on the draws
-    let explain = args.flag("explain").is_some() || args.flag("explain-json").is_some();
+    let explain = switched_on(args.flag("explain")) || args.flag("explain-json").is_some();
     let explain_json = args.flag("explain-json");
     match args.flag("arith") {
         None | Some("f64") => {
@@ -1144,6 +1145,11 @@ fn run_determine<N: Num>(
     }
 }
 
+/// An option that is a switch: given, and not given as off.
+fn switched_on(value: Option<&str>) -> bool {
+    matches!(value, Some(v) if !matches!(v, "0" | "false" | "off" | "no"))
+}
+
 /// Determine, with the strategy found explained: `explain` is `determine
 /// --explain 1`, so that the answer and its explanation come from one run.
 fn cmd_explain(args: &[String]) -> i32 {
@@ -1288,7 +1294,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
     let print_strategy = args.flag("print-strategy").is_some();
     // every point with its strategy explained, a decision tree per choice
     // node on the draws alone
-    let explain_points = args.flag("explain").is_some();
+    let explain_points = switched_on(args.flag("explain"));
     let started = Instant::now();
     let report = match pareto::frontier(
         &tree,
@@ -1420,6 +1426,14 @@ fn cmd_pareto(args: &[String]) -> i32 {
             report.open_bounds
         );
     }
+    // the explanations, one per point with a witness, made once for the
+    // report and for the JSON; they come after the search and outside its
+    // time limit
+    let explanations: Vec<Option<Result<Vec<explain::Explanation>, String>>> = if explain_points {
+        report.points.iter().map(|p| p.witness.as_ref().map(|w| explain::explain(&tree, &w.decisions))).collect()
+    } else {
+        Vec::new()
+    };
     for (i, p) in report.points.iter().enumerate() {
         let shown = tree.shown_vec(&p.value);
         println!("point {:<9}{}", i + 1, dec(&shown));
@@ -1448,16 +1462,15 @@ fn cmd_pareto(args: &[String]) -> i32 {
                         println!("    after {dh:?} take {action}");
                     }
                 }
-                if explain_points {
-                    match explain::explain(&tree, &w.decisions) {
-                        Ok(e) => {
-                            let name = |id: u32| serve::name_of(&tree, id);
-                            for line in explain::render_text(&tree, &e, &name).lines() {
-                                println!("    {line}");
-                            }
+                match explanations.get(i).and_then(|e| e.as_ref()) {
+                    Some(Ok(e)) => {
+                        let name = |id: u32| serve::name_of(&tree, id);
+                        for line in explain::render_text(&tree, e, &name).lines() {
+                            println!("    {line}");
                         }
-                        Err(err) => println!("    explanation unavailable: {err}"),
                     }
+                    Some(Err(err)) => println!("    explanation unavailable: {err}"),
+                    None => {}
                 }
             }
             None => println!("  witness      none"),
@@ -1470,7 +1483,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
         }
     }
     if let Some(path) = args.flag("json") {
-        let text = json_report(&tree, &report, elapsed, print_strategy, explain_points);
+        let text = json_report(&tree, &report, elapsed, print_strategy, &explanations);
         if let Err(e) = std::fs::write(path, text) {
             return fail(&format!("{path}: {e}"));
         }
@@ -1484,7 +1497,13 @@ fn cmd_pareto(args: &[String]) -> i32 {
 /// The report of pareto as JSON, written by hand: the crate carries no
 /// serialiser and the shape is small. Rationals are strings, so that nothing
 /// is rounded on the way out.
-fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bool, explained: bool) -> String {
+fn json_report(
+    tree: &Tree,
+    r: &pareto::Report,
+    elapsed: Duration,
+    decisions: bool,
+    explanations: &[Option<Result<Vec<explain::Explanation>, String>>],
+) -> String {
     fn esc(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
         out.push('"');
@@ -1607,14 +1626,13 @@ fn json_report(tree: &Tree, r: &pareto::Report, elapsed: Duration, decisions: bo
                         .collect();
                     o.push_str(&format!(",\n      \"strategy\": [{}]", items.join(", ")));
                 }
-                if explained {
-                    // the strategy of the point as one decision tree per
-                    // choice node, on the draws alone
-                    let node = |id: u32| format!("{{\"id\": {id}, \"name\": {}}}", esc(&serve::name_of(tree, id)));
-                    match explain::explain(tree, &w.decisions) {
-                        Ok(e) => o.push_str(&format!(",\n      \"explanation\": {}", explain::render_json(tree, &e, &node))),
-                        Err(err) => o.push_str(&format!(",\n      \"explanation_error\": {}", esc(&err))),
-                    }
+                // the strategy of the point as one decision tree per choice
+                // node, on the draws alone
+                let node = |id: u32| format!("{{\"id\": {id}, \"name\": {}}}", esc(&serve::name_of(tree, id)));
+                match explanations.get(i).and_then(|e| e.as_ref()) {
+                    Some(Ok(e)) => o.push_str(&format!(",\n      \"explanation\": {}", explain::render_json(tree, e, &node))),
+                    Some(Err(err)) => o.push_str(&format!(",\n      \"explanation_error\": {}", esc(err))),
+                    None => {}
                 }
                 o.push('\n');
             }

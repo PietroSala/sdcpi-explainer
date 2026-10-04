@@ -1491,15 +1491,19 @@ function paintStrategyView(p) {
 const xref = (n) => $('detail').checked ? ' ' + label(n) : '';
 // Where a draw is taken: the pass of every loop around its node, the
 // outermost first, so that a draw keeps its name whatever the other passes
-// did. With the detailed regions a loop is its identifier; without them
-// the loops are told apart by their depth.
+// did. With the detailed regions a loop is its identifier. Without them a
+// loop has none: in a tree whose draws sit under one loop at most, "the
+// loop" is enough; where loops are nested every loop is named by its
+// depth, the outermost at depth 1, so that one loop has one name through
+// the whole tree.
+let XDEEP = false;
+const chainOf = (n) => n.take ? 0 : Math.max(n.passes.length + (n.loop ? 1 : 0), chainOf(n.yes), chainOf(n.no));
 function passesText(n) {
   const q = n.passes;
   if (!q.length) return '';
   if ($('detail').checked) return 'in ' + q.map(x => `pass ${x.pass} of the loop ${label(x.loop)}`).join(', ') + ', ';
-  if (q.length === 1) return `in pass ${q[0].pass} of the loop around it, `;
-  if (q.length === 2) return `in pass ${q[0].pass} of the outer loop and pass ${q[1].pass} of the inner one, `;
-  return `in passes ${q.map(x => x.pass).join(', ')} of the loops around it, the outermost first, `;
+  if (!XDEEP) return `in pass ${q[0].pass} of the loop, `;
+  return 'in ' + q.map((x, d) => `pass ${x.pass} of the loop at depth ${d + 1}`).join(', ') + ', ';
 }
 // What a test states: one draw, named by its passes, and the answer it
 // gave. The statement is true when the draw was taken and gave that answer,
@@ -1509,7 +1513,10 @@ function statement(n) {
     return `${passesText(n)}the draw${xref(n.draw)} between ${label(n.options[0])} and ${label(n.options[1])} took ${label(n.value.child)}`;
   }
   const region = n.options[0];
-  const which = `the loop${xref(n.draw)} ` + (region.task ? `over ${label(region)}` : `that starts with ${h(region.name)}`);
+  const starts = region.task ? `over ${label(region)}` : `that starts with ${h(region.name)}`;
+  const which = $('detail').checked ? `the loop${xref(n.draw)} ${starts}`
+              : XDEEP ? `the loop at depth ${n.passes.length + 1}, ${starts.replace('that starts', 'which starts')},`
+              : `the loop ${starts}`;
   // the draw after the last pass does not exist, the exit there being forced
   return `${passesText(n)}${which} ${n.value.is === 'again' ? 'ran again' : 'was left'} after its pass ${n.pass}`;
 }
@@ -1557,7 +1564,7 @@ async function paintExplanation(p) {
   box.innerHTML = d.explanations.map(e =>
     `<div class="xchoice">The choice${xref(e.choice)} between ${label(e.options[0])} and ${label(e.options[1])} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
     + `${e.tests} ${e.tests === 1 ? 'test' : 'tests'}${e.minimal ? '' : ', not known to be the fewest'}</span></div>`
-    + explNode(e.tree)).join('')
+    + ((XDEEP = chainOf(e.tree) >= 2), explNode(e.tree))).join('')
     + `<div class="hint" style="margin-top:8px">Each test is one statement on one draw of nature, the draw named by the
        pass of every loop around it. It is true when that draw was taken and gave that answer, and false otherwise: when
        it gave the other answer, and when it was not taken at all. The exit a loop is forced to after its last pass is no

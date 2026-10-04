@@ -5,8 +5,9 @@
                                              [--k 1,2,3] [--verbose]
 
 The theory of the explainer (parallel-paper/semantics-time.tex of the paper
-repository, section "A strategy as a function of the draws") rests on four
-statements about the decision process of a BPMN+CPI process, the single-step
+repository, the names of the entries of a trail in the section on loops and
+the section "A strategy as a function of the draws") rests on statements
+about the decision process of a BPMN+CPI process, the single-step
 one of the paper with the clauses of the loops and the bound K on the
 passes. This file implements that semantics exactly as the tex writes it,
 five rules read by rank and witness, the two clauses of a loop, the counts,
@@ -32,24 +33,52 @@ policies, every history of every policy enumerated:
              have pairwise distinct assignments indexed by the occurrences,
              the j-th draw at a node with what it gave: the reading the
              trees of the tool test;
-  passes     with loops or without, a draw is indexed by the passes it is
+  passes     with loops or without, a draw is named by the passes it is
              taken in: for every loop above its node, the outermost first,
              the pass of that loop that is running, and at a loop, last,
              the pass its region has just closed. No two draws of a history
              have the same node and the same passes, and the histories at
              which a choice is due have pairwise distinct assignments
              indexed so: the reading the trees of the tool test. The exit a
-             loop is forced to at the bound is no draw and has no index;
+             loop is forced to at the bound is no draw and has no name;
+  names      the same of every entry of a trail, the decisions with the
+             draws: no two entries of a history have the same name;
+  within     every complete history of the process at K + 1 passes, every
+             action taken at every choice, has one complete history at K
+             passes whose entries are its entries with names within K: the
+             run at K that takes at every name what the longer run took
+             never asks for a name the longer run has not, ends with those
+             entries and no other, pays the impact the longer run pays
+             outside the passes past K, and takes no more time. With no
+             loop under a parallel node the entries keep their order; under
+             one they need not, a pass past the bound taking time, and the
+             runs in which they do not are counted apart;
+  continuation  a policy at K + 1 continues the policy at K when at a
+             choice outside the passes past K it takes what the policy
+             takes where that choice is due, with the same passes, in the
+             run within the bound. With no loop under a parallel node every
+             policy has one continuation, which pays outside the passes
+             past K the impact of the policy and takes no less time. Under
+             a parallel node a policy may have none, reading at a choice an
+             entry that a pass past the bound moves after it: such policies
+             are counted apart, and the others are checked as above. The
+             process of the counterexample, a loop and then a nature node
+             beside a task and then a choice, is checked by hand: the
+             policy that decides by the draw has no continuation, the one
+             that ignores it has one;
   beyond     the decision functions of a policy of the process at K passes,
-             read through the indices they know, decide the process at
-             K + 1 passes: at every choice met outside the passes past K
-             the assignment read is one the policy decided, the impact paid
-             outside those passes is the impact of the policy at K, and
-             the time is no less. A choice inside a pass past K is one the
-             policy never meets, and what is read there is counted apart.
-             The same is tried with the occurrences in place of the passes
-             and counted apart, as an observation: there it fails, a pass
-             past the bound moving the count of every later draw;
+             read through the names they know, decide the process at K + 1
+             passes. With no loop under a parallel node, at every choice
+             met outside the passes past K the assignment read is one the
+             policy decided, the impact paid outside those passes is the
+             impact of the policy at K, and the time is no less. Under a
+             parallel node the reading may depart, and the runs in which it
+             does are counted apart. A choice inside a pass past K is one
+             the policy never meets, and what is read there is counted
+             apart. The same is tried with the occurrences in place of the
+             passes and counted apart, as an observation: there it fails as
+             soon as a loop sits inside a loop, a pass past the bound moving
+             the count of every later draw;
   reading    two sequences of draws that one policy meets at the same choice
              are told apart by the policy the proof builds, changed at one
              history, at which both are still met;
@@ -147,7 +176,11 @@ class Tree:
         return f"({self.text(self.low[v])} {op} {self.text(self.high[v])})"
 
 
-def random_tree(rng, tasks, loops_allowed):
+def random_tree(rng, tasks, loops_allowed, under_par=False):
+    """A random process. With under_par the root is a parallel node whose
+    first branch is a loop followed by a region and whose second branch is
+    a sequence of two regions: the shape in which the passes of a loop move
+    the draws and the decisions of the other branch in time."""
     b = Tree()
 
     def gen(n):
@@ -162,6 +195,13 @@ def random_tree(rng, tasks, loops_allowed):
         while loops_allowed and rng.random() < 0.22:
             node = b.add(LOOP, node, prob=F(rng.randint(2, 7), 10))
         return node
+    if under_par and tasks >= 4:
+        cut = sorted(rng.sample(range(1, tasks), 3))
+        a, c, d, e = cut[0], cut[1] - cut[0], cut[2] - cut[1], tasks - cut[2]
+        loop = b.add(LOOP, gen(a), prob=F(rng.randint(2, 7), 10))
+        first = b.add(SEQ, loop, gen(c))
+        second = b.add(SEQ, gen(d), gen(e))
+        return b.finish(b.add(PAR, first, second))
     return b.finish(gen(tasks))
 
 
@@ -374,6 +414,84 @@ def by_passes(t, rec):
     """The draws of a history, each with its node and its passes."""
     return [((e[0], pass_index(t, rec["states"][i], e[0])), e[1])
             for e, k, i in zip(rec["trail"], rec["kinds"], rec["pos"]) if k == "drw"]
+
+
+def named(t, rec):
+    """Every entry of the trail of a history, a decision or a draw, with its
+    name: the node and the passes it is taken in."""
+    return [((e[0], pass_index(t, rec["states"][i], e[0])), e[1], k)
+            for e, k, i in zip(rec["trail"], rec["kinds"], rec["pos"])]
+
+
+def named_states(t, states, K):
+    """The same from the states alone: (name, what it started), in order."""
+    out = []
+    for i in range(len(states) - 1):
+        r, v, mv = moves(t, states[i], K)
+        if r == 1 or (r == 4 and len(mv) == 2):
+            out.append(((v, pass_index(t, states[i], v)), entry(t, states[i], v, states[i + 1])[1]))
+    return out
+
+
+def within_bound(t, name, K):
+    """A name whose passes are within K: every pass of a loop above at most
+    K, and at a loop the pass the draw follows below K."""
+    u, idx = name
+    if t.kind[u] == LOOP:
+        return all(x <= K for x in idx[:-1]) and idx[-1] < K
+    return all(x <= K for x in idx)
+
+
+def loop_under_par(t):
+    """Whether some loop has a parallel node above it."""
+    for l in t.loops:
+        u = t.parent[l]
+        while u is not None:
+            if t.kind[u] == PAR:
+                return True
+            u = t.parent[u]
+    return False
+
+
+def run_cost(t, states, K, keep=None):
+    """The impact and the time of a history; with keep, the impact of the
+    tasks closed outside the passes past keep."""
+    impact, kept, time = F(0), F(0), F(0)
+    for i in range(len(states) - 1):
+        r, v, mv = moves(t, states[i], K)
+        if r == 5:
+            s, nxt = states[i], states[i + 1]
+            closers = [u for u in t.tasks if s[0][u] >= 0 and nxt[0][u] == DONE]
+            impact += sum(t.impact[u] for u in closers)
+            if keep is not None:
+                kept += sum(t.impact[u] for u in closers
+                            if all(s[1][t.low[l]] < keep for l in loops_above(t, u)))
+            time += mv[0][3] // TIME
+    return impact, kept, time
+
+
+def guided(t, K, G):
+    """The run of the process at K passes that takes, at every decision and
+    at every draw, what the map G gives to its name. Returns the states and
+    the names used, or None and the name G does not have."""
+    s = initial(t)
+    states, used = [s], {}
+    while True:
+        r, v, mv = moves(t, s, K)
+        if r is None:
+            return states, used
+        if r == 1 or (r == 4 and len(mv) == 2):
+            name = (v, pass_index(t, s, v))
+            if name not in G:
+                return None, name
+            nxt = [m[2] for m in mv if entry(t, s, v, m[2])[1] == G[name]]
+            if len(nxt) != 1:
+                return None, name
+            used[name] = G[name]
+            s = nxt[0]
+        else:
+            s = mv[0][2]
+        states.append(s)
 
 
 def by_occurrences(rec):
@@ -638,13 +756,138 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
     except Failure as e:
         fail("recovered", str(e))
 
-    # beyond: the decision functions at K passes, read through the indices
-    # they know, decide the process at K + 1 passes
     if K is None or not t.loops:
         return
+    past_the_bound(t, K, records, policy, cap, counts, fails, label, rng)
+
+
+def past_the_bound(t, K, records, policy, cap, counts, fails, label, rng):
+    """What a policy of the process at K passes is past the bound: the run
+    within the bound of every run at K + 1, the policies that continue it,
+    and the reading of its decision functions."""
+    def fail(name, detail):
+        fails.append((name, label, detail))
+
+    def count(name, n=1):
+        counts[name] = counts.get(name, 0) + n
+
     time_K = sum(r["prob"] * (r["cost"] // TIME) for r in records if r["rank"] is None)
     impact_K = sum(r["prob"] * (r["cost"] % TIME) for r in records if r["rank"] is None)
     above = {u: loops_above(t, u) for u in range(t.n)}
+    under = loop_under_par(t)
+
+    # names: no two entries of a history, decisions and draws, have the same
+    # node and the same passes
+    for rec in records:
+        if rec["rank"] is None:
+            names = [n for n, _, _ in named(t, rec)]
+            count("names")
+            if len(set(names)) != len(names):
+                fail("names", f"two entries of one history with the same node and passes: {names}")
+
+    # within: every run of the process at K + 1 passes, every action taken,
+    # has one run at K passes with its entries within the bound
+    try:
+        longer = enumerate_all(t, K + 1, 300)
+    except (OverflowError, RecursionError):
+        longer = []
+    if len(longer) > 60:
+        longer = rng.sample(longer, 60)
+    for hist in longer:
+        if moves(t, hist[-1], K + 1)[0] is not None:
+            continue
+        entries = named_states(t, hist, K + 1)
+        G = dict(entries)
+        count("within")
+        if len(G) != len(entries):
+            fail("within", f"two entries of a run at K + 1 with the same name: {entries}")
+            continue
+        states, used = guided(t, K, G)
+        if states is None:
+            fail("within", f"the run at K guided by the names of a run at K + 1 asks for {used}, which that run has not")
+            continue
+        inside = {n: x for n, x in G.items() if within_bound(t, n, K)}
+        if used != inside:
+            fail("within", f"the run at K has the entries {sorted(used.items(), key=str)}, the run at K + 1 has within the bound {sorted(inside.items(), key=str)}")
+            continue
+        imp, _, tm = run_cost(t, states, K)
+        _, kept, tm2 = run_cost(t, hist, K + 1, keep=K)
+        if imp != kept:
+            fail("within", f"the run at K pays {imp}, the run at K + 1 pays {kept} outside the passes past K")
+        elif tm > tm2:
+            fail("within", f"the run at K takes {tm}, the run at K + 1 takes {tm2}")
+        # the order of the entries within the bound: kept when no loop sits
+        # under a parallel node
+        order_K = [n for n, _ in named_states(t, states, K)]
+        order_2 = [n for n, _ in entries if within_bound(t, n, K)]
+        if order_K != order_2:
+            if under:
+                count("observed: a run at K + 1 has its entries within the bound in another order, a loop under a parallel node")
+            else:
+                fail("within", f"no loop under a parallel node and the entries in another order: {order_K} against {order_2}")
+
+    # continuation: a policy at K + 1 continues the policy at K when, at a
+    # choice outside the passes past K, it takes what the policy takes where
+    # that choice is due, with the same passes, in the run within the bound.
+    # That run is known at the choice up to the entries the history has; the
+    # histories at K it may still be are those that agree with the history
+    # wherever both have an entry, and a continuation exists when the policy
+    # takes one action at all of them
+    rows = {}
+    for rec in records:
+        if rec["rank"] == 1:
+            v = rec["witness"]
+            key = (v, pass_index(t, rec["states"][-1], v))
+            rows.setdefault(key, []).append(({n: x for n, x, _ in named(t, rec)}, policy[rec["states"]]))
+
+    def continuation():
+        out = {"met": 0, "none": 0, "many": 0, "kept": F(0), "time": F(0), "nodes": 0}
+
+        def walk(s, G, prob, kept, time):
+            out["nodes"] += 1
+            if out["nodes"] > 40 * cap:
+                raise OverflowError
+            r, v, mv = moves(t, s, K + 1)
+            if r is None:
+                out["kept"] += prob * kept; out["time"] += prob * time
+                return
+            if r == 1:
+                name = (v, pass_index(t, s, v))
+                if any(s[1][t.low[l]] >= K for l in above[v]):
+                    a = t.low[v]                    # inside a pass past K: whatever
+                else:
+                    out["met"] += 1
+                    found = sorted({a for (g, a) in rows.get(name, [])
+                                    if all(G[n] == x for n, x in g.items() if n in G)})
+                    if not found:
+                        out["none"] += 1
+                        return
+                    if len(found) > 1:
+                        # the policy decides two ways at the histories this
+                        # one may still be: nothing continues it from here,
+                        # and what follows is no longer its run
+                        out["many"] += 1
+                        return
+                    a = found[0]
+                (_, pr, nxt, c) = [m for m in mv if m[0] == a][0]
+                G2 = dict(G); G2[name] = entry(t, s, v, nxt)[1]
+                walk(nxt, G2, prob * pr, kept, time)
+            elif r == 4 and len(mv) == 2:
+                name = (v, pass_index(t, s, v))
+                for (_, pr, nxt, c) in mv:
+                    G2 = dict(G); G2[name] = entry(t, s, v, nxt)[1]
+                    walk(nxt, G2, prob * pr, kept, time)
+            elif r == 5:
+                (_, pr, nxt, c) = mv[0]
+                closers = [u for u in t.tasks if s[0][u] >= 0 and nxt[0][u] == DONE]
+                paid = sum(t.impact[u] for u in closers if all(s[1][t.low[l]] < K for l in above[u]))
+                walk(nxt, G, prob * pr, kept + paid, time + c // TIME)
+            else:
+                (_, pr, nxt, c) = mv[0]
+                walk(nxt, G, prob * pr, kept, time)
+
+        walk(initial(t), {}, F(1), F(0), F(0))
+        return out
 
     def beyond(nested):
         """The policy at K + 1 that reads, at a choice, the draws at the
@@ -698,26 +941,77 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
         walk(initial(t), [], {}, F(1), F(0), F(0))
         return out
 
+    where = "a loop under a parallel node" if under else "no loop under a parallel node"
     try:
+        c = continuation()
+        count("continuation")
+        if c["none"]:
+            fail("continuation", f"{c['none']} of {c['met']} choices at K + 1, reached deciding as the policy, with no history at K that agrees with the history ({where})")
+        elif c["many"]:
+            # the policy reads, at a choice, an entry that a pass past the
+            # bound moves after that choice: no policy continues it
+            if under:
+                count("observed: a policy with no continuation, a loop under a parallel node")
+            else:
+                fail("continuation", f"no loop under a parallel node and {c['many']} of {c['met']} choices at K + 1 that the policy decides two ways")
+        elif c["kept"] != impact_K:
+            fail("continuation", f"the continuation pays {c['kept']} outside the passes past K, the policy at K pays {impact_K} ({where})")
+        elif c["time"] < time_K:
+            fail("continuation", f"the continuation takes {c['time']}, less than {time_K} at K ({where})")
+
         b = beyond(True)
         count("beyond")
-        counts["observed: choices inside a pass past the bound"] = counts.get("observed: choices inside a pass past the bound", 0) + b["inside"]
-        counts["observed: of which no decision is read"] = counts.get("observed: of which no decision is read", 0) + b["undecided"]
-        if b["missing"]:
-            fail("beyond", f"{b['missing']} of {b['met']} choices outside the passes past K read draws the policy never decided after")
-        elif b["kept"] != impact_K:
-            fail("beyond", f"the impact outside the passes past K is {b['kept']}, the policy at K pays {impact_K}")
-        elif b["time"] < time_K:
-            fail("beyond", f"the time at K + 1 is {b['time']}, less than {time_K} at K")
+        count("observed: choices inside a pass past the bound", b["inside"])
+        count("observed: of which no decision is read", b["undecided"])
+        departs = b["missing"] or b["kept"] != impact_K or b["time"] < time_K
+        if departs and under:
+            count("observed: the reading by passes departs past the bound, a loop under a parallel node")
+        elif departs:
+            fail("beyond", f"no loop under a parallel node: {b['missing']} of {b['met']} choices outside the passes past K read draws "
+                           f"the policy never decided after; impact {b['kept']} against {impact_K}, time {b['time']} against {time_K}")
         # the same with the occurrences: an observation, counted apart
         nested_loops = any(above[l] for l in t.loops)
         o = beyond(False)
-        counts["observed: occurrences beyond"] = counts.get("observed: occurrences beyond", 0) + 1
+        count("observed: occurrences beyond")
         if o["missing"] or o["kept"] != impact_K:
-            name = "observed: occurrences misread beyond, loops inside loops" if nested_loops else "observed: occurrences misread beyond, no loop inside a loop"
-            counts[name] = counts.get(name, 0) + 1
+            count("observed: occurrences misread beyond, loops inside loops" if nested_loops
+                  else "observed: occurrences misread beyond, no loop inside a loop")
     except (OverflowError, RecursionError):
-        counts["beyond skipped for size"] = counts.get("beyond skipped for size", 0) + 1
+        count("beyond skipped for size")
+
+
+def counterexample():
+    """The process in which a policy has no continuation: a loop and then a
+    nature node in one branch of a parallel node, a task of two hours and
+    then a choice in the other. At one pass the choice knows the draw; with
+    a pass more the choice comes first. Returns the failures."""
+    b = Tree()
+    T = b.add(TASK, dur=1, impact=F(1)); loop = b.add(LOOP, T, prob=F(1, 2))
+    E = b.add(TASK, dur=1, impact=F(0)); Fq = b.add(TASK, dur=1, impact=F(0)); Y = b.add(NATURE, E, Fq, prob=F(1, 2))
+    D = b.add(TASK, dur=2, impact=F(0)); G = b.add(TASK, dur=1, impact=F(5)); H = b.add(TASK, dur=1, impact=F(9))
+    C = b.add(CHOICE, G, H)
+    t = b.finish(b.add(PAR, b.add(SEQ, loop, Y), b.add(SEQ, D, C)))
+    out = []
+    reads = ignores = None
+    for seed in range(64):
+        records, policy = enumerate_policy(t, 1, random.Random(seed), 1000)
+        taken = {policy[r["states"]] for r in records if r["rank"] == 1}
+        if len(taken) == 2 and reads is None:
+            reads = (records, policy)
+        if len(taken) == 1 and ignores is None:
+            ignores = (records, policy)
+    if reads is None or ignores is None:
+        return ["the counterexample found no policy of each kind"]
+    for (records, policy), kind in ((reads, "reads"), (ignores, "ignores")):
+        counts, fails = {}, []
+        past_the_bound(t, 1, records, policy, 1000, counts, fails, "the counterexample", random.Random(0))
+        out += [f"the counterexample, the policy that {kind} the draw: [{n}] {d}" for n, _, d in fails]
+        none = counts.get("observed: a policy with no continuation, a loop under a parallel node", 0)
+        if kind == "reads" and none != 1:
+            out.append("the policy that decides by the draw of the other branch has a continuation")
+        if kind == "ignores" and none != 0:
+            out.append("the policy that ignores the draw of the other branch has no continuation")
+    return out
 
 
 def main():
@@ -738,7 +1032,8 @@ def main():
     unbounded = [0]
     for n in range(args.count):
         loops_allowed = n % 2 == 0
-        t = random_tree(rng, rng.randint(2, 6), loops_allowed)
+        under_par = n % 6 == 0
+        t = random_tree(rng, rng.randint(4, 6) if under_par else rng.randint(2, 6), loops_allowed, under_par)
         if t.loops:
             with_loops += 1
         else:
@@ -753,6 +1048,8 @@ def main():
                 unbounded[0] += 1
         if args.verbose:
             print(n, t.text())
+    for line in counterexample():
+        fails.append(("counterexample", "", line))
     skipped = counts.pop("skipped", 0)
     nested = "loops inside loops among them"
     print(f"{args.count} processes, {with_loops} with loops ({nested}) and {without} without, {args.policies} policies each, K in {ks}, "

@@ -3,7 +3,7 @@
 
     run.py --bin PATH                               the whole suite
     run.py --bin PATH --count 60 --seed 3 --k 1,2,3 --jobs 2
-    run.py --bin PATH --work DIR --port 8437 --timeout 60
+    run.py --bin PATH --work DIR --port 8637 --timeout 60
 
 Nothing of the tool is trusted but what it writes. The semantics the checks
 replay is the one of `check_draws.py`, an implementation independent of the
@@ -11,20 +11,37 @@ engine (identifiers in-order from 0 there, from 1 in the tool); the instance
 file the tool writes is read by the reader of `scripts/loops/check.py`, and
 the random processes are drawn by `scripts/loops/gen.py`.
 
+The design checked. A draw is named by its node and its passes, a nested
+index: for every loop above the node, the outermost first, the pass of that
+loop that is running, counted from 1, and at a loop, last, the pass of its
+own region that the draw follows, which is below the bound K, the exit
+forced at the bound being no draw. A test is one statement on one draw,
+"the draw (node, passes) gave x": it holds of a history exactly when the
+history has a draw with that node, those passes and that value, and fails
+in every other case, the other answer and the draw not taken. A test has
+two branches, `yes` and `no`. The index of a draw is computed here by
+`pass_index` of `check_draws.py`, on the state the draw is taken at.
+
 The processes are hand-written ones covering every construct (a loop over a
 choice, a choice whose child is a loop, a loop whose region is a loop,
 natures in parallel followed by a choice, a choice under two nested loops,
 a nature and a choice inside one loop, a choice beside a loop in parallel,
-the running example of the README) and `--count` random ones, 3 to 6 tasks,
-0 to 2 loops, 1 to 2 impacts. For every process and every K of `--k` (the
-first K alone on a process without loops) the frontier is asked with
+a loop inside a loop two and three deep, a loop inside a loop under a
+parallel node beside a nature node, a choice that follows a loop beside a
+draw of the other branch, the running example of the README) and `--count`
+random ones, 3 to 6 tasks, 0 to 2 loops, 1 to 2 impacts. For every process
+and every K of `--k` (the first K alone on a process without loops) the
+frontier is asked with
 
     sdcpi pareto F.yaml --onephase 1 --time 1 --max-iter K --explain 1
                         --print-strategy 1 --json out.json --time-limit T
 
-A frontier that is cut, that failed, or that has more than `--max-points`
-points is skipped; at most `--sample` points of a frontier are checked, a
-point whose strategy has more than `--max-decisions` decisions is skipped.
+A frontier that failed or that has more than `--max-points` points is
+skipped; a frontier the time limit cut has its points checked all the same
+(`--cut 0` skips it), a point being a strategy with its exact value whether
+or not the frontier is whole; at most `--sample` points of a frontier are
+checked, a point whose strategy has more than `--max-decisions` decisions
+is skipped.
 
 What is checked, for every sampled point with its strategy and explanation:
 
@@ -32,30 +49,65 @@ What is checked, for every sampled point with its strategy and explanation:
              the simulator, its entries typed by walking the clauses (a
              decision at a choice, a draw at a nature node, a draw of a loop
              that runs it again or leaves it below the bound, nothing at a
-             forced exit); the assignment by occurrences of its draws is
-             computed, the tree of the choice node the trail ends at is
-             evaluated on it (a test on (node, occurrence) follows the
-             branch whose value matches, absent when the draw was not
-             taken), and the leaf must be the action;
+             forced exit); every draw of the history gets its nested index,
+             the tree of the choice node the trail ends at is evaluated on
+             the draws (a test holds exactly when the history has a draw
+             with that node, those passes and that value), and the leaf
+             must be the action;
   trees      one tree per choice node decided and none for another node;
+  names      in every test `passes` lists exactly the loops above the node,
+             the outermost first, every pass is between 1 and K, at a loop
+             `pass` is there and is below K, so that no test speaks of the
+             exit forced at the bound, at a nature node there is no `pass`,
+             `value` is a child of the nature node or again/out at a loop
+             and never absent, and both branches are there;
   recovered  when the witness has no open history, the whole process is
-             walked on the simulator deciding at every choice by the trees
-             alone: every choice met has a tree and a matching branch, and
-             the expected cost so obtained, the time and then the impacts,
-             is the exact value of the point, in rationals;
+             walked on the simulator at K deciding at every choice by the
+             trees alone: every choice met has a tree, and the expected
+             cost so obtained, the time and then the impacts, is the exact
+             value of the point, in rationals;
   coverage   on the same walk, the decisions met are exactly the decisions
              of the strategy;
-  minimal    for a tree claimed minimal with at most 9 rows and 8 features,
-             an exhaustive search independent of the tool (every pair of
-             tests and depth a tree on a set of rows may have, no
-             lexicographic shortcut) gives the fewest tests and, among the
-             trees with the fewest tests, the least depth: both must equal
-             `tests` and `depth`;
+  minimal    for a tree claimed minimal with at most `--min-rows` rows and
+             `--min-statements` statements (9 and 10), an exhaustive search
+             independent of the tool over the two-way trees on the
+             statements met, every (draw, value) pair with a value some row
+             has (every pair of tests and depth a tree on a set of rows may
+             have, no lexicographic shortcut), gives the fewest tests and,
+             among the trees with the fewest tests, the least depth: both
+             must equal `tests` and `depth`;
   shape      `tests` and `depth` are those of the tree carried, `histories`
-             is the number of decisions at that choice, no test repeats a
-             feature along a path, every test has two branches at least,
-             every branch value is one met by a row that reaches it, the
-             nodes named are of the right kind;
+             is the number of decisions at that choice, no statement is
+             made twice along a path, both branches of a test are reached
+             by a history, the nodes named are of the right kind;
+  beyond     when the witness has no open history and the process has a
+             loop, the process is walked on the simulator at K + 1 passes,
+             deciding at every choice by evaluating the tree of that choice
+             on the history so far; the evaluation is total, a test being
+             true or false of any history. A choice node with no tree may
+             be met only inside a pass past K (some loop above it has
+             closed K passes of its region or more): its low child is
+             taken there, and counted apart. Four checks:
+               beyond-total   the walk never fails: every tree evaluates,
+                              to a child of its choice, no choice without a
+                              tree is met outside the passes past K, no two
+                              draws of a history have one name;
+               beyond-impact  the expected impact paid at the tasks closed
+                              outside the passes past K is the exact impact
+                              of the point, component by component;
+               beyond-time    the expected time at K + 1 is at least the
+                              time of the point;
+               beyond-gap     the whole expected cost at K + 1, time and
+                              impacts, is at most the value of the point
+                              plus the upper end of its `continued`; with
+                              no `continued` the two values are equal.
+             The last three hold when no loop of the process sits under a
+             parallel node (Corollary "The explanation past the bound" of
+             the note). Under one the passes past the bound take time and
+             move the draws of the other branch before or after a choice:
+             the strategy may then have no continuation, or the tree may
+             depart from it, and the points where one of the three does not
+             hold are counted apart and not failed;
   determine  `sdcpi explain F.yaml --B <the value, rounded up at the sixth
              decimal> --arith exact --time 1 --max-iter K --explain-json E
              --print-strategy 1` answers yes, and its trees classify its
@@ -112,7 +164,6 @@ import check_draws as cd  # noqa: E402  the independent simulator
 import check as loops_check  # noqa: E402  the reader of the instance file
 import gen as loops_gen  # noqa: E402  the random processes
 
-ABSENT = ("absent",)
 AGAIN = ("again",)
 OUT = ("out",)
 
@@ -126,6 +177,32 @@ HAND = [
      "(0.5 ((S, 1, {x: 1}) , (0.3 (((A, 1, {x: 3}) ^ (B, 2, {y: 2})) , ((N, 1) ^[0.5] (M, 2, {x: 1}))))))"),
     ("nature-and-choice-in-loop", "(0.6 (((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 1})) , ((C, 1, {x: 3}) ^ (D, 3, {y: 2}))))"),
     ("choice-beside-loop", "(((0.5 ((A, 1, {x: 1}) ^[0.4] (B, 2))) || ((C, 2, {x: 2}) ^ (D, 1, {y: 3}))) , ((E, 1, {x: 2}) ^ (G, 2, {y: 1})))"),
+    ("loop-in-loop",
+     "(0.5 ((0.5 ((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 2}))) , ((C, 1, {x: 1}) ^ (D, 1, {y: 3}))))"),
+    ("loop-in-loop-choice-inside",
+     "((0.5 ((S, 1, {x: 1}) , (0.4 (((A, 1, {x: 2}) ^[0.5] (B, 2, {y: 1})) , ((C, 1, {x: 3}) ^ (D, 2, {y: 2})))))) , "
+     "((E, 1, {x: 4}) ^ (G, 3, {y: 1})))"),
+    ("loop-in-loop-in-loop",
+     "(0.5 ((0.4 ((0.5 ((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 2}))) , ((C, 1, {x: 2}) ^ (D, 2, {y: 1})))) , "
+     "((E, 1, {x: 1}) ^ (G, 1, {y: 2}))))"),
+    ("three-loops-then-choice",
+     "((0.3 (0.4 ((0.5 ((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 1}))) , (S, 1, {x: 1})))) , ((C, 1, {x: 5}) ^ (D, 3, {y: 2})))"),
+    ("loop-in-loop-beside-nature",
+     "(((0.5 ((0.5 ((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 1}))) , (S, 1, {x: 1}))) || ((N, 2, {x: 1}) ^[0.4] (M, 3, {y: 2}))) , "
+     "((C, 1, {x: 4}) ^ (D, 2, {y: 3})))"),
+    ("loop-in-loop-with-choice-beside-nature",
+     "((0.5 ((0.4 (((A, 1, {x: 1}) ^[0.5] (B, 2, {y: 1})) , ((C, 1, {x: 3}) ^ (D, 1, {y: 2})))) , (S, 1))) || "
+     "(((N, 2, {x: 1}) ^[0.4] (M, 3, {y: 2})) , ((E, 1, {x: 2}) ^ (G, 2, {y: 2}))))"),
+    ("choice-overtaken-by-a-draw",
+     # a loop under a parallel node: at one pass the choice after A1 is due
+     # before the draw of the other branch, and with a pass more after it;
+     # the tree that reads that draw departs from the strategy past the bound
+     "(((0.5 ((A1, 1, {x: 1}) ^[0.5] (A3, 3, {y: 1}))) , ((X, 1, {x: 1}) ^ (Y, 1, {y: 1}))) || "
+     "((D, 2, {x: 1}) , ((E, 1, {x: 1}) ^[0.5] (F, 1, {y: 1}))))"),
+    ("choice-after-loop-beside-draw",
+     "(((0.5 (A, 1, {x: 1})) , ((B, 1, {x: 3}) ^ (C, 2, {y: 2}))) || ((D, 2, {x: 1}) , ((E, 1, {x: 2}) ^[0.5] (G, 1, {y: 3}))))"),
+    ("loop-of-loop-of-nature-then-choice",
+     "((0.5 (0.4 ((A, 1, {x: 2}) ^[0.5] (B, 2, {y: 1})))) , ((C, 1, {x: 3}) ^ (D, 2, {y: 2})))"),
     ("loop-then-choice", "((0.5 ((A, 1, {x: 1}) ^[0.5] (B, 3, {y: 2}))) , ((C, 1, {x: 6}) ^ (D, 4, {y: 1})))"),
     ("readme-example",
      "( (Intake, 1, {euro: 10, hours: 2}) , ( (Swap, 2, {euro: 50, hours: 4}) ^ ( (Mend, 3, {euro: 20, hours: 9}) , "
@@ -211,16 +288,30 @@ class BadTrail(Exception):
     pass
 
 
+class SameName(Exception):
+    """Two draws of one history with the same node and the same passes: the
+    index would not name a draw."""
+
+
+def draw_key(t, s, v):
+    """The name of the draw taken at the state `s` at the node `v` of the
+    simulator: the identifier of the tool and the passes."""
+    return (v + 1, tuple(cd.pass_index(t, s, v)))
+
+
 class Replayer:
     """The histories the trails write, replayed on the simulator and typed
     by the clauses. The state reached after every prefix is kept, the
-    decisions of a strategy sharing their prefixes."""
+    decisions of a strategy sharing their prefixes. The draws of a history
+    are a map from (node, passes) to what the draw gave, the node an
+    identifier of the tool, the passes those of `pass_index` of the
+    simulator at the state the draw is taken at."""
 
     def __init__(self, proc: Process, K: int):
         self.p, self.t, self.K = proc, proc.t, K
-        self.memo = {(): (cd.initial(self.t), {}, {})}
+        self.memo = {(): (cd.initial(self.t), {})}
 
-    def consume(self, s, assign, occ, x):
+    def consume(self, s, hist, x):
         """Walks from `s` to the first decision or draw and gives it the
         entry `x`, an identifier of the tool."""
         t = self.t
@@ -234,7 +325,7 @@ class Replayer:
             if r == 1:
                 for (a, _, nxt, _) in mv:
                     if a == y:
-                        return nxt, assign, occ
+                        return nxt, hist
                 raise BadTrail(f"{x} is no child of the choice {v + 1}")
             if r == 4 and len(mv) == 2:
                 if t.kind[v] == cd.NATURE:
@@ -248,11 +339,12 @@ class Replayer:
                     nxt, value = mv[1][2], OUT
                 else:
                     raise BadTrail(f"{x} is neither the region nor the exit of the loop {v + 1}")
-                occ = dict(occ)
-                occ[v] = occ.get(v, 0) + 1
-                assign = dict(assign)
-                assign[(v + 1, occ[v])] = value
-                return nxt, assign, occ
+                key = draw_key(t, s, v)
+                if key in hist:
+                    raise SameName(f"two draws of one history at the node {key[0]} in the passes {list(key[1])}")
+                hist = dict(hist)
+                hist[key] = value
+                return nxt, hist
             s = mv[0][2]
         raise BadTrail("the replay does not end")
 
@@ -261,24 +353,24 @@ class Replayer:
         g = len(trail)
         while trail[:g] not in self.memo:
             g -= 1
-        s, assign, occ = self.memo[trail[:g]]
+        s, hist = self.memo[trail[:g]]
         while g < len(trail):
-            s, assign, occ = self.consume(s, assign, occ, trail[g])
+            s, hist = self.consume(s, hist, trail[g])
             g += 1
-            self.memo[trail[:g]] = (s, assign, occ)
-        return s, assign
+            self.memo[trail[:g]] = (s, hist)
+        return s, hist
 
     def due(self, trail):
         """The choice due after the trail, an identifier of the tool, and
-        the assignment by occurrences of the draws of the trail."""
-        s, assign = self.after(trail)
+        the draws of the trail by their passes."""
+        s, hist = self.after(trail)
         t = self.t
         for _ in range(100000):
             r, v, mv = cd.moves(t, s, self.K)
             if r is None:
                 raise BadTrail("the history ends the run: no choice is due")
             if r == 1:
-                return v + 1, assign
+                return v + 1, hist
             if r == 4 and len(mv) == 2:
                 raise BadTrail(f"the trail ends at the draw of the node {v + 1}, not at a choice")
             s = mv[0][2]
@@ -299,29 +391,48 @@ class NoBranch(Exception):
     pass
 
 
-def evaluate(node, assign):
-    while "take" not in node:
-        key = (node["draw"]["id"], node["occurrence"])
-        val = assign.get(key, ABSENT)
-        for b in node["branches"]:
-            if bvalue(b["value"]) == val:
-                node = b["tree"]
-                break
-        else:
-            raise NoBranch(f"no branch for the value {val} of the draw {key[1]} at the node {key[0]}")
-    return node["take"]["id"]
+def test_key(node):
+    """The draw a test speaks of, as the JSON writes it: its node and its
+    passes, those of the loops above and, at a loop, its own last."""
+    passes = [x["pass"] for x in node["passes"]]
+    if "pass" in node:
+        passes.append(node["pass"])
+    return (node["draw"]["id"], tuple(passes))
+
+
+def holds(node, hist):
+    """Whether the statement of a test holds of a history: the history has
+    a draw with that node, those passes and that value."""
+    return hist.get(test_key(node)) == bvalue(node["value"])
+
+
+def evaluate(node, hist):
+    """The leaf a tree comes to on a history. Total on a tree that is well
+    made; a tree that is not raises NoBranch."""
+    try:
+        while "take" not in node:
+            node = node["yes"] if holds(node, hist) else node["no"]
+        return node["take"]["id"]
+    except (KeyError, TypeError) as err:
+        raise NoBranch(f"a test of the tree does not read: {type(err).__name__} {err}")
 
 
 def stats(node):
     """The tests and the depth of a tree."""
     if "take" in node:
         return 0, 0
-    tests, depth = 1, 0
-    for b in node["branches"]:
-        t, d = stats(b["tree"])
-        tests += t
-        depth = max(depth, d)
-    return tests, depth + 1
+    t1, d1 = stats(node["yes"])
+    t2, d2 = stats(node["no"])
+    return 1 + t1 + t2, 1 + max(d1, d2)
+
+
+def tests_of(node, out):
+    if "take" not in node:
+        out.append(node)
+        for side in ("yes", "no"):
+            if side in node:
+                tests_of(node[side], out)
+    return out
 
 
 def strip(x):
@@ -343,11 +454,13 @@ def pareto_pairs(pairs):
     return out
 
 
-def fewest(values, labels):
-    """The fewest tests of a decision tree that separates the rows, and the
-    least depth among the trees with the fewest tests, by exhaustion: for
-    every set of rows, every pair (tests, depth) no other pair is below."""
-    nf = len(values[0]) if values else 0
+def fewest(truth, labels):
+    """The fewest tests of a two-way decision tree that separates the rows,
+    and the least depth among the trees with the fewest tests, by
+    exhaustion: for every set of rows, every pair (tests, depth) no other
+    pair is below. `truth[r][p]` says whether the statement `p` holds of
+    the row `r`."""
+    ns = len(truth[0]) if truth else 0
     memo = {}
 
     def solve(rows):
@@ -357,22 +470,17 @@ def fewest(values, labels):
             memo[rows] = {(0, 0)}
             return memo[rows]
         res = set()
-        for f in range(nf):
-            parts = {}
-            for r in rows:
-                parts.setdefault(values[r][f], []).append(r)
-            if len(parts) < 2:
+        seen = set()
+        for p in range(ns):
+            yes = frozenset(r for r in rows if truth[r][p])
+            if not yes or yes == rows or yes in seen:
                 continue
-            combos = {(1, 0)}
-            for part in parts.values():
-                sub = solve(frozenset(part))
-                combos = pareto_pairs({(a + c, max(b, d)) for (a, b) in combos for (c, d) in sub})
-                if not combos:
-                    break
-            res |= {(a, b + 1) for (a, b) in combos}
+            seen.add(yes)
+            a, b = solve(yes), solve(rows - yes)
+            res |= {(1 + x + z, 1 + max(y, w)) for (x, y) in a for (z, w) in b}
         memo[rows] = pareto_pairs(res)
         return memo[rows]
-    got = solve(frozenset(range(len(values))))
+    got = solve(frozenset(range(len(truth))))
     return min(got) if got else None
 
 
@@ -412,8 +520,8 @@ class Result:
 # ---------------------------------------------------------------------------
 
 def rows_of(rep: Replayer, proc: Process, decisions):
-    """The decisions by the choice they are taken at: (assignment, action,
-    trail). An error is a decision that is no decision at a choice."""
+    """The decisions by the choice they are taken at: (draws by passes,
+    action, trail). An error is a decision that is no decision at a choice."""
     by_choice, errors = {}, []
     for trail, action in decisions:
         try:
@@ -428,6 +536,63 @@ def rows_of(rep: Replayer, proc: Process, decisions):
     return by_choice, errors
 
 
+def check_names(proc: Process, K, e, problems):
+    """The names of the draws in the tests of one tree. Returns the tests
+    read."""
+    t = proc.t
+    v = e["choice"]["id"]
+    tests = tests_of(e["tree"], [])
+    for node in tests:
+        try:
+            u = node["draw"]["id"]
+            if not isinstance(u, int) or not (1 <= u <= proc.n) or proc.kind(u) not in (cd.NATURE, cd.LOOP):
+                problems.append(f"choice {v}: a test at the node {u}, neither a nature node nor a loop")
+                continue
+            is_loop = proc.kind(u) == cd.LOOP
+            where = f"choice {v}: the test at the node {u}"
+            above = [l + 1 for l in cd.loops_above(t, u - 1)]
+            if "passes" not in node or not isinstance(node["passes"], list):
+                problems.append(f"{where} has no passes")
+                continue
+            named = [x["loop"]["id"] for x in node["passes"]]
+            if named != above:
+                problems.append(f"{where} names the loops {named}, the loops above it from the outermost are {above}")
+            for x in node["passes"]:
+                if not isinstance(x["pass"], int) or isinstance(x["pass"], bool) or not (1 <= x["pass"] <= K):
+                    problems.append(f"{where} is in the pass {x['pass']} of the loop {x['loop']['id']}, outside 1 to {K}")
+            if is_loop:
+                if "pass" not in node:
+                    problems.append(f"{where}, a loop, has no pass of its own")
+                else:
+                    j = node["pass"]
+                    if not isinstance(j, int) or isinstance(j, bool) or j < 1:
+                        problems.append(f"{where}, a loop, follows its pass {j}")
+                    elif j >= K:
+                        problems.append(f"{where}, a loop, follows its pass {j}: at the bound {K} the exit is forced and is no draw")
+            elif "pass" in node:
+                problems.append(f"{where}, a nature node, has a pass of its own, {node['pass']}")
+            if "value" not in node or not isinstance(node["value"], dict) or "is" not in node["value"]:
+                problems.append(f"{where} has no value")
+            else:
+                val = node["value"]
+                if val["is"] == "child":
+                    if is_loop or val.get("child", {}).get("id") not in proc.children(u):
+                        problems.append(f"{where} has the value {strip(val)}, no child drawn there")
+                elif val["is"] in ("again", "out"):
+                    if not is_loop:
+                        problems.append(f"{where}, a nature node, has the value {val['is']}")
+                else:
+                    problems.append(f"{where} has the value {val['is']}")
+            for side in ("yes", "no"):
+                if side not in node or not isinstance(node[side], dict):
+                    problems.append(f"{where} has no branch {side}")
+            if "branches" in node or "occurrence" in node:
+                problems.append(f"{where} still carries the fields of the count by occurrences")
+        except (KeyError, TypeError, AttributeError) as err:
+            problems.append(f"choice {v}: a test does not read: {type(err).__name__} {err}")
+    return len(tests)
+
+
 def check_shape(proc: Process, e, rows, problems):
     v = e["choice"]["id"]
     if not (1 <= v <= proc.n) or proc.kind(v) != cd.CHOICE:
@@ -440,13 +605,17 @@ def check_shape(proc: Process, e, rows, problems):
         problems.append(f"choice {v}: tests {e['tests']} depth {e['depth']} written, {tests} and {depth} in the tree")
     if e["histories"] != len(rows):
         problems.append(f"choice {v}: histories {e['histories']}, {len(rows)} decisions at that choice")
+    if not isinstance(e["minimal"], bool):
+        problems.append(f"choice {v}: minimal is {e['minimal']}")
 
     def walk(node, here, path):
         if "take" in node:
             if node["take"]["id"] not in proc.children(v):
                 problems.append(f"choice {v}: a leaf takes {node['take']['id']}, no child of the choice")
+            elif any(r[1] != node["take"]["id"] for r in here):
+                problems.append(f"choice {v}: a leaf takes {node['take']['id']} and a history that reaches it does not")
             return
-        u, j = node["draw"]["id"], node["occurrence"]
+        u = node["draw"]["id"]
         if not (1 <= u <= proc.n) or proc.kind(u) not in (cd.NATURE, cd.LOOP):
             problems.append(f"choice {v}: a test at the node {u}, neither a nature node nor a loop")
             return
@@ -455,37 +624,31 @@ def check_shape(proc: Process, e, rows, problems):
             problems.append(f"choice {v}: the test at {u} says loop {node['loop']}")
         if [o["id"] for o in node["options"]] != proc.children(u):
             problems.append(f"choice {v}: the test at {u} has options {[o['id'] for o in node['options']]}")
-        if not isinstance(j, int) or j < 1:
-            problems.append(f"choice {v}: occurrence {j}")
-        if (u, j) in path:
-            problems.append(f"choice {v}: the draw {j} at the node {u} is tested twice along a path")
-        if len(node["branches"]) < 2:
-            problems.append(f"choice {v}: the test of the draw {j} at {u} has {len(node['branches'])} branch")
-        seen = set()
-        for b in node["branches"]:
-            val = bvalue(b["value"])
-            if val in seen:
-                problems.append(f"choice {v}: the value {val} twice at the test ({u}, {j})")
-            seen.add(val)
-            if val[0] == "child" and (is_loop or val[1] not in proc.children(u)):
-                problems.append(f"choice {v}: the value {val} at the test ({u}, {j}) is no child drawn there")
-            if val[0] in ("again", "out") and not is_loop:
-                problems.append(f"choice {v}: the value {val} at a nature node {u}")
-            if val[0] not in ("child", "again", "out", "absent"):
-                problems.append(f"choice {v}: the value {val} is unknown")
-            part = [r for r in here if r[0].get((u, j), ABSENT) == val]
-            if not part:
-                problems.append(f"choice {v}: the branch {val} of the test ({u}, {j}) is met by no history that reaches it")
-            walk(b["tree"], part, path | {(u, j)})
+        statement = (test_key(node), bvalue(node["value"]))
+        if statement in path:
+            problems.append(f"choice {v}: the statement {statement} is made twice along a path")
+        yes = [r for r in here if holds(node, r[0])]
+        no = [r for r in here if not holds(node, r[0])]
+        if not yes:
+            problems.append(f"choice {v}: the statement {statement} holds of no history that reaches it")
+        if not no:
+            problems.append(f"choice {v}: the statement {statement} holds of every history that reaches it")
+        walk(node["yes"], yes, path | {statement})
+        walk(node["no"], no, path | {statement})
     walk(e["tree"], rows, frozenset())
 
 
-def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point, rep=None):
-    """classify, trees, shape and minimal on one strategy and its trees.
-    Returns the rows by choice, or None when the strategy does not replay."""
+def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point, rep=None, limits=(9, 10)):
+    """classify, trees, names, shape and minimal on one strategy and its
+    trees. Returns the rows by choice, or None when the strategy does not
+    replay."""
     rep = rep or Replayer(proc, K)
     ctx = dict(point=point, trees=explanation, strategy=[[list(t), a] for t, a in decisions][:200])
-    by_choice, errors = rows_of(rep, proc, decisions)
+    try:
+        by_choice, errors = rows_of(rep, proc, decisions)
+    except SameName as err:
+        res.fail(prefix + "classify", f"on the simulator: {err}", **ctx)
+        return None
     for err in errors[:3]:
         res.fail(prefix + "classify", err, **ctx)
     if errors:
@@ -502,14 +665,23 @@ def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point
                  f"decisions at the choices {sorted(by_choice)}", **ctx)
     else:
         res.ok(prefix + "trees")
+    for v, e in sorted(trees.items()):
+        problems = []
+        n = check_names(proc, K, e, problems)
+        if problems:
+            res.fail(prefix + "names", "; ".join(problems[:4]), **ctx)
+        else:
+            res.ok(prefix + "names")
+        if not prefix:
+            res.note("tests whose names were read", n)
     for v, rows in sorted(by_choice.items()):
         e = trees.get(v)
         if e is None:
             continue
         bad = None
-        for (assign, action, trail) in rows:
+        for (hist, action, trail) in rows:
             try:
-                leaf = evaluate(e["tree"], assign)
+                leaf = evaluate(e["tree"], hist)
                 if leaf != action:
                     bad = f"choice {v}: after {list(trail)} the strategy takes {action}, the tree takes {leaf}"
             except NoBranch as err:
@@ -520,29 +692,33 @@ def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point
             res.fail(prefix + "classify", bad, **ctx)
         res.ok(prefix + "classify", len(rows) - (1 if bad else 0))
         problems = []
-        check_shape(proc, e, rows, problems)
+        try:
+            check_shape(proc, e, rows, problems)
+        except (KeyError, TypeError) as err:
+            problems.append(f"choice {v}: the tree does not read: {type(err).__name__} {err}")
         if problems:
             res.fail(prefix + "shape", "; ".join(problems[:4]), **ctx)
         else:
             res.ok(prefix + "shape")
-        features = sorted({f for (assign, _, _) in rows for f in assign})
-        if not e["minimal"]:
+        # what a test may state: a draw, and a value it gave in some row
+        statements = sorted({(key, val) for (hist, _, _) in rows for key, val in hist.items()})
+        if e["minimal"] is not True:
             res.note("trees not claimed minimal")
-        elif len(rows) > 9 or len(features) > 8:
-            res.skip("minimal: more than 9 rows or 8 features")
+        elif len(rows) > limits[0] or len(statements) > limits[1]:
+            res.skip(f"minimal: more than {limits[0]} rows or {limits[1]} statements")
         else:
-            values = [tuple(assign.get(f, ABSENT) for f in features) for (assign, _, _) in rows]
-            best = fewest(values, [a for (_, a, _) in rows])
+            truth = [tuple(hist.get(key) == val for (key, val) in statements) for (hist, _, _) in rows]
+            best = fewest(truth, [a for (_, a, _) in rows])
             if best is None:
-                res.fail(prefix + "minimal", f"choice {v}: no tree on the draws separates the rows", **ctx)
+                res.fail(prefix + "minimal", f"choice {v}: no tree on the statements separates the rows", **ctx)
             elif best != (e["tests"], e["depth"]):
                 res.fail(prefix + "minimal", f"choice {v}: the tool says {e['tests']} tests and depth {e['depth']}, "
                          f"the fewest are {best[0]} tests, then depth {best[1]}, on {len(rows)} rows and the "
-                         f"features {features}", **ctx)
+                         f"statements {statements}", **ctx)
             else:
                 res.ok(prefix + "minimal")
                 if best[0] > 0:
-                    res.note("minimal trees with a test")
+                    res.note("minimal trees with a test, checked by exhaustion")
     return by_choice
 
 
@@ -551,17 +727,18 @@ class Lost(Exception):
 
 
 def recover(proc: Process, K, explanation, cap):
-    """The whole process walked with the trees alone deciding. Returns the
-    expected cost, the decisions met as (trail, action), and one final
-    trail. Raises Lost when a choice has no tree or no branch."""
+    """The whole process walked at K with the trees alone deciding. Returns
+    the expected cost, the decisions met as (trail, action), and one final
+    trail. Raises Lost when a choice has no tree or its tree does not
+    evaluate."""
     t = proc.t
     trees = {e["choice"]["id"]: e["tree"] for e in explanation}
     total = [F(0)] * proc.k
     met = set()
     finals, a_final = 0, None
-    stack = [(cd.initial(t), {}, {}, F(1), [F(0)] * proc.k, ())]
+    stack = [(cd.initial(t), {}, F(1), [F(0)] * proc.k, ())]
     while stack:
-        s, assign, occ, prob, cost, trail = stack.pop()
+        s, hist, prob, cost, trail = stack.pop()
         while True:
             r, v, mv = cd.moves(t, s, K)
             if r is None:
@@ -577,7 +754,7 @@ def recover(proc: Process, K, explanation, cap):
                 if tree is None:
                     raise Lost(f"the choice {v + 1} is met after {list(trail)} and has no tree")
                 try:
-                    a = evaluate(tree, assign)
+                    a = evaluate(tree, hist)
                 except NoBranch as err:
                     raise Lost(f"the choice {v + 1} is met after {list(trail)}: {err}")
                 nxt = [m[2] for m in mv if m[0] == a - 1]
@@ -587,7 +764,9 @@ def recover(proc: Process, K, explanation, cap):
                 trail = trail + (a,)
                 s = nxt[0]
             elif r == 4 and len(mv) == 2:
-                j = occ.get(v, 0) + 1
+                key = draw_key(t, s, v)
+                if key in hist:
+                    raise Lost(f"two draws of one history at the node {key[0]} in the passes {list(key[1])}, after {list(trail)}")
                 for i, (_, pr, nxt, _) in enumerate(mv):
                     if t.kind[v] == cd.NATURE:
                         child = cd.entry(t, s, v, nxt)[1]
@@ -596,11 +775,9 @@ def recover(proc: Process, K, explanation, cap):
                         value, x = AGAIN, t.low[v] + 1
                     else:
                         value, x = OUT, v + 1
-                    o2 = dict(occ)
-                    o2[v] = j
-                    a2 = dict(assign)
-                    a2[(v + 1, j)] = value
-                    stack.append((nxt, a2, o2, prob * pr, list(cost), trail + (x,)))
+                    h2 = dict(hist)
+                    h2[key] = value
+                    stack.append((nxt, h2, prob * pr, list(cost), trail + (x,)))
                 break
             elif r == 5:
                 paid = proc.advance(s, mv[0][2])
@@ -609,6 +786,149 @@ def recover(proc: Process, K, explanation, cap):
             else:
                 s = mv[0][2]
     return total, met, a_final
+
+
+def beyond(proc: Process, K, explanation, cap):
+    """The process walked at K + 1 passes, every choice decided by the tree
+    of that choice on the history so far. A pass past K is a pass of a
+    region that has closed K passes or more; a node is inside one at a
+    state when some loop above it has such a region there. Returns the
+    whole expected cost, the expected impact paid at the tasks closed
+    outside the passes past K, and what was met. Raises Lost when the walk
+    fails."""
+    t = proc.t
+    above = [cd.loops_above(t, u) for u in range(t.n)]
+    trees = {e["choice"]["id"]: e["tree"] for e in explanation}
+    total = [F(0)] * proc.k
+    kept = [F(0)] * (proc.k - 1)
+    seen = {"finals": 0, "outside": 0, "inside": 0, "no tree inside": 0, "past": 0}
+    stack = [(cd.initial(t), {}, F(1), [F(0)] * proc.k, [F(0)] * (proc.k - 1), ())]
+    while stack:
+        s, hist, prob, cost, mine, trail = stack.pop()
+        while True:
+            r, v, mv = cd.moves(t, s, K + 1)
+            if r is None:
+                seen["finals"] += 1
+                if seen["finals"] > cap:
+                    raise OverflowError
+                for c in range(proc.k):
+                    total[c] += prob * cost[c]
+                for c in range(proc.k - 1):
+                    kept[c] += prob * mine[c]
+                break
+            if r == 1:
+                extra = any(s[1][t.low[l]] >= K for l in above[v])
+                tree = trees.get(v + 1)
+                if tree is None:
+                    if not extra:
+                        raise Lost(f"at {K + 1} passes the choice {v + 1} is met after {list(trail)}, outside the passes "
+                                   f"past {K}, and has no tree")
+                    seen["no tree inside"] += 1
+                    a = t.low[v] + 1
+                else:
+                    try:
+                        a = evaluate(tree, hist)
+                    except NoBranch as err:
+                        raise Lost(f"at {K + 1} passes the choice {v + 1} is met after {list(trail)}: {err}")
+                seen["inside" if extra else "outside"] += 1
+                nxt = [m[2] for m in mv if m[0] == a - 1]
+                if not nxt:
+                    raise Lost(f"at {K + 1} passes the tree of the choice {v + 1} takes {a}, no child of it")
+                trail = trail + (a,)
+                s = nxt[0]
+            elif r == 4 and len(mv) == 2:
+                key = draw_key(t, s, v)
+                if key in hist:
+                    raise Lost(f"at {K + 1} passes two draws of one history at the node {key[0]} in the passes "
+                               f"{list(key[1])}, after {list(trail)}")
+                if any(x > K for x in key[1]) or (t.kind[v] == cd.LOOP and key[1][-1] >= K):
+                    seen["past"] += 1
+                for i, (_, pr, nxt, _) in enumerate(mv):
+                    if t.kind[v] == cd.NATURE:
+                        child = cd.entry(t, s, v, nxt)[1]
+                        value, x = ("child", child + 1), child + 1
+                    elif i == 0:
+                        value, x = AGAIN, t.low[v] + 1
+                    else:
+                        value, x = OUT, v + 1
+                    h2 = dict(hist)
+                    h2[key] = value
+                    stack.append((nxt, h2, prob * pr, list(cost), list(mine), trail + (x,)))
+                break
+            elif r == 5:
+                nxt = mv[0][2]
+                paid = proc.advance(s, nxt)
+                cost = [x + y for x, y in zip(cost, paid)]
+                mine = list(mine)
+                for u in t.tasks:
+                    if s[0][u] >= 0 and nxt[0][u] == cd.DONE and all(s[1][t.low[l]] < K for l in above[u]):
+                        for c, x in enumerate(proc.impact[u]):
+                            mine[c] += x
+                s = nxt
+            else:
+                s = mv[0][2]
+    return total, kept, seen
+
+
+def beyond_checks(res: Result, proc: Process, K, p, explanation, cap, ctx):
+    """The four checks past the bound on one point."""
+    value = [F(x) for x in p["value"]]
+    try:
+        total, kept, seen = beyond(proc, K, explanation, cap)
+    except OverflowError:
+        res.skip("beyond: more histories than the cap")
+        return
+    except Lost as e:
+        res.fail("beyond-total", str(e), **ctx)
+        return
+    res.ok("beyond-total")
+    res.note("beyond: choices decided outside the passes past the bound", seen["outside"])
+    res.note("beyond: choices met inside a pass past the bound", seen["inside"])
+    res.note("beyond: of which with no tree, the low child taken", seen["no tree inside"])
+    res.note("beyond: draws past the bound", seen["past"])
+    if seen["past"]:
+        res.note("beyond: points whose walk takes a draw past the bound")
+    shown = lambda xs: [str(x) for x in xs]  # noqa: E731
+    # with a loop under a parallel node the explanation may depart from the
+    # strategy past the bound, or the strategy have no continuation: what
+    # does not hold there is counted apart
+    under = cd.loop_under_par(proc.t)
+    real_fail = res.fail
+
+    def departs(name, detail, **kw):
+        if under:
+            res.note(f"beyond: a loop under a parallel node, {name} does not hold past the bound")
+        else:
+            real_fail(name, detail, **kw)
+    if kept != value[1:]:
+        departs("beyond-impact", f"at {K + 1} passes the impact paid outside the passes past {K} is {shown(kept)}, "
+                f"the point pays {shown(value[1:])}", **ctx)
+    else:
+        res.ok("beyond-impact")
+    if total[0] < value[0]:
+        departs("beyond-time", f"at {K + 1} passes the expected time is {total[0]}, less than {value[0]} of the point", **ctx)
+    else:
+        res.ok("beyond-time")
+    cont = p.get("continued")
+    if cont is None:
+        if total != value:
+            departs("beyond-gap", f"the point has no continued and at {K + 1} passes the cost is {shown(total)}, "
+                    f"the point says {shown(value)}", **ctx)
+        else:
+            res.ok("beyond-gap")
+            res.note("beyond: points with no continued, equal at one pass more")
+    else:
+        up = [F(x) for x in cont["up"]]
+        low = [F(x) for x in cont["low"]]
+        if len(up) != len(value) or len(low) != len(value):
+            res.fail("beyond-gap", f"continued has {len(low)} and {len(up)} components, the value {len(value)}", **ctx)
+        elif any(total[c] > value[c] + up[c] for c in range(len(value))):
+            departs("beyond-gap", f"at {K + 1} passes the cost is {shown(total)}, past the value {shown(value)} plus the "
+                    f"upper end of continued {shown(up)}", **ctx)
+        else:
+            res.ok("beyond-gap")
+            if any(total[c] < value[c] + low[c] for c in range(len(value))):
+                res.note("beyond: points below the lower end of continued at one pass more (expected: one pass, not all)")
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +974,10 @@ def ask_page(port, text, K, decisions_text):
 def valid(rep: Replayer, proc: Process, decisions):
     """None when the decisions are decisions at choices and a function of
     the draws, as the simulator reads them; the reason otherwise."""
-    by_choice, errors = rows_of(rep, proc, decisions)
+    try:
+        by_choice, errors = rows_of(rep, proc, decisions)
+    except SameName as err:
+        return str(err)
     if errors:
         return errors[0]
     for v, rows in by_choice.items():
@@ -666,7 +989,7 @@ def valid(rep: Replayer, proc: Process, decisions):
     return None
 
 
-def page_checks(res: Result, proc: Process, K, port, points, rng, final_trail, n_mut):
+def page_checks(res: Result, proc: Process, K, port, points, rng, final_trail, n_mut, limits):
     """The page on the points given: the trees of the command line, the
     malformed decisions, the mutations."""
     text = res.text
@@ -775,7 +1098,7 @@ def page_checks(res: Result, proc: Process, K, port, points, rng, final_trail, n
             else:
                 res.ok("page-mutation")
                 res.note("mutations still valid")
-                analyse(res, "page-mutation-", proc, K, ds, got["explanations"], label, rep)
+                analyse(res, "page-mutation-", proc, K, ds, got["explanations"], label, rep, limits=limits)
     if alive(port):
         res.ok("page-alive")
     else:
@@ -821,7 +1144,8 @@ def determine_check(res: Result, proc: Process, K, cfg, yaml: Path, value, label
         res.fail("determine", f"the file of --explain-json is no JSON: {e}", point=label)
         return
     res.ok("determine")
-    analyse(res, "determine-", proc, K, decisions, explanation, f"{label}, explain --B {budget}")
+    analyse(res, "determine-", proc, K, decisions, explanation, f"{label}, explain --B {budget}",
+            limits=cfg["limits"])
 
 
 def check_case(spec):
@@ -851,6 +1175,7 @@ def _check_case(res: Result, name, text, K, cfg):
     code, out, errtext = run_tool(args, cfg["timeout"] + cfg["time_limit"] + 30)
     if code is None:
         res.skip("frontier: the tool ran past the timeout")
+        res.note(f"ran past the timeout: {name} K={K}")
         return
     if not report.exists():
         if "TooManyOutcomes" in out + errtext or "too many" in (out + errtext).lower():
@@ -859,7 +1184,9 @@ def _check_case(res: Result, name, text, K, cfg):
             res.fail("pareto", f"sdcpi pareto exits {code} and writes no report: {(out + errtext)[-400:]}")
         return
     data = json.loads(report.read_text())
-    if data["status"] != "complete":
+    if data["status"] == "timeout" and cfg["cut"]:
+        res.note("frontiers cut by the time limit, their points checked")
+    elif data["status"] != "complete":
         res.skip(f"frontier: {data['status']}")
         return
     points = data["points"]
@@ -902,12 +1229,17 @@ def _check_case(res: Result, name, text, K, cfg):
         res.note("points checked")
         if any(e["tests"] > 0 for e in explanation):
             res.note("points with a test")
-        if any("draw" in json.dumps(e["tree"]) and '"loop": true' in json.dumps(e["tree"]) for e in explanation):
+        all_tests = [n for e in explanation for n in tests_of(e["tree"], [])]
+        if any(n.get("loop") is True for n in all_tests):
             res.note("points testing a loop draw")
-        if any('"absent"' in json.dumps(e["tree"]) for e in explanation):
-            res.note("points with an absent branch")
+        if any(len(n.get("passes", [])) >= 1 and n.get("loop") is False for n in all_tests):
+            res.note("points testing a nature draw under a loop")
+        if any(len(n.get("passes", [])) + (1 if "pass" in n else 0) >= 2 for n in all_tests):
+            res.note("points testing a draw named by two passes or more")
+        if any(len(n.get("passes", [])) + (1 if "pass" in n else 0) >= 3 for n in all_tests):
+            res.note("points testing a draw named by three passes or more")
         ctx = dict(point=label, trees=explanation, strategy=p["strategy"][:200])
-        by_choice = analyse(res, "", proc, K, decisions, explanation, label)
+        by_choice = analyse(res, "", proc, K, decisions, explanation, label, limits=cfg["limits"])
         checked.append((label, decisions, explanation, p))
         if by_choice is None:
             continue
@@ -935,6 +1267,8 @@ def _check_case(res: Result, name, text, K, cfg):
                      f"in the strategy and not met {extra}, met and not in the strategy {missing}", **ctx)
         else:
             res.ok("coverage")
+        if proc.t.loops:
+            beyond_checks(res, proc, K, p, explanation, cfg["cap"], ctx)
     # determine: the point with the most tests and one more
     if checked:
         order = sorted(checked, key=lambda c: -sum(e["tests"] for e in c[2]))
@@ -945,7 +1279,8 @@ def _check_case(res: Result, name, text, K, cfg):
     if cfg["port"] and checked:
         order = sorted(checked, key=lambda c: -sum(e["tests"] for e in c[2]))
         picks = order[:1] + rng.sample(order[1:], min(len(order) - 1, cfg["page_points"] - 1))
-        page_checks(res, proc, K, cfg["port"], [(c[0], c[1], c[2]) for c in picks], rng, final_trail, cfg["mutations"])
+        page_checks(res, proc, K, cfg["port"], [(c[0], c[1], c[2]) for c in picks], rng, final_trail, cfg["mutations"],
+                    cfg["limits"])
 
 
 # ---------------------------------------------------------------------------
@@ -973,7 +1308,7 @@ def main() -> int:
     ap.add_argument("--k", default="1,2,3", help="the bounds on the passes (default 1,2,3)")
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--work", default=None, help="the scratch folder (default a fresh temporary one)")
-    ap.add_argument("--port", type=int, default=8437, help="the port of the server of the suite; 0 leaves the page out")
+    ap.add_argument("--port", type=int, default=8637, help="the port of the server of the suite; 0 leaves the page out")
     ap.add_argument("--timeout", type=float, default=60, help="seconds a run of the tool may take (default 60)")
     ap.add_argument("--time-limit", type=float, default=20, help="the --time-limit of pareto (default 20)")
     ap.add_argument("--sample", type=int, default=40, help="points checked per frontier (default 40)")
@@ -983,6 +1318,9 @@ def main() -> int:
     ap.add_argument("--determine", type=int, default=2, help="points per frontier given to explain (default 2)")
     ap.add_argument("--page-points", type=int, default=5, help="points per frontier given to the page (default 5)")
     ap.add_argument("--mutations", type=int, default=10, help="mutated decisions per frontier (default 10)")
+    ap.add_argument("--cut", type=int, default=1, help="1 checks the points of a frontier the time limit cut (default 1)")
+    ap.add_argument("--min-rows", type=int, default=9, help="rows of a tree checked minimal by exhaustion (default 9)")
+    ap.add_argument("--min-statements", type=int, default=10, help="statements of such a tree (default 10)")
     ap.add_argument("--show", type=int, default=12, help="failures printed in full (default 12)")
     args = ap.parse_args()
 
@@ -1020,7 +1358,8 @@ def main() -> int:
 
     cfg = {"bin": args.bin, "work": str(work), "port": args.port, "timeout": args.timeout, "time_limit": args.time_limit,
            "sample": args.sample, "max_points": args.max_points, "max_decisions": args.max_decisions, "cap": args.cap,
-           "determine": args.determine, "page_points": args.page_points, "mutations": args.mutations, "seed": args.seed}
+           "determine": args.determine, "page_points": args.page_points, "mutations": args.mutations, "seed": args.seed,
+           "cut": args.cut, "limits": (args.min_rows, args.min_statements)}
     specs = []
     for (name, text) in HAND:
         for K in ks:

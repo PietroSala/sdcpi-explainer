@@ -153,13 +153,28 @@ passes, the head of a tree:
 
 **Past the bound.** A tree is a function of any run, every statement being
 true or false of it, so it decides also a run that goes on past the bound,
-where the exit is a draw again. Outside the passes past the bound it takes
-what the strategy takes, the statements on the earlier passes keeping their
-truth; inside them it takes some branch, and whatever is taken there is
-paid within `continued`, the gap of the forced exits. The check script
-tries it at one pass more: `beyond`, no failure; with a count of the draws
-in place of the passes the reading breaks as soon as a loop sits inside a
-loop, which is why the index is nested.
+where the exit is a draw again. Whether it then plays the strategy depends
+on where the loops sit.
+
+- *No loop under a parallel node.* While a loop runs nothing else does, the
+  passes past the bound are blocks that can be cut out of the run, and what
+  is left is a run within the bound. Outside those passes the tree takes
+  what the strategy takes, the statements on the draws within the bound
+  keeping their truth; inside them it takes some branch, and whatever is
+  taken there is paid within `continued`, the gap of the forced exits.
+  This is proved in the note (Corollary "The explanation past the bound").
+- *A loop under a parallel node.* The passes past the bound take time, and
+  the draws of the other branch move before or after a choice. A strategy
+  that reads, at a choice, a draw that those passes move after the choice
+  cannot be played past the bound at all; and where it can, a tree that
+  reads a draw they move before the choice departs from it. `continued` is
+  then the gap of the policies that continue the strategy, if there are
+  any, and the tool does not tell which case a point is in.
+
+The check script tries all of it at one pass more: `within`,
+`continuation`, `beyond`, and a counterexample checked by hand; with a
+count of the draws in place of the passes the reading breaks as soon as a
+loop sits inside a loop, which is why the index is nested.
 
 `explain` is `determine --explain 1`; `--explain-json F` writes the trees,
 and on `pareto` the option explains the strategy of every point, in the
