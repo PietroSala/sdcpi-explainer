@@ -1486,39 +1486,59 @@ function paintStrategyView(p) {
   if (expl) paintExplanation(p);
 }
 const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+// A node named in a sentence of the explanation: with the detailed regions
+// its identifier follows the noun, without them the names of its children
+// say which node it is, the name of a region being the one of its first task.
+const xref = (n) => $('detail').checked ? ' ' + label(n) : '';
 function explNode(n) {
   if (n.take) return `<span class="xleaf">take ${label(n.take)}</span>`;
-  // a nature node is named by its two children, a loop by its region
-  const q = n.loop ? `the ${ordinal(n.occurrence)} draw of the loop over ${label(n.options[0])} ${label(n.draw)}`
-                   : `the ${ordinal(n.occurrence)} draw between ${label(n.options[0])} and ${label(n.options[1])} ${label(n.draw)}`;
+  const nth = ordinal(n.occurrence);
+  const region = n.options[0];
+  const q = n.loop
+    ? `the ${nth} draw of the loop${xref(n.draw)} ` + (region.task ? `over ${label(region)}` : `that starts with ${h(region.name)}`)
+    : `the ${nth} draw${xref(n.draw)} between ${label(n.options[0])} and ${label(n.options[1])}`;
   const answer = (v) => v.is === 'child' ? `took ${label(v.child)}`
                       : v.is === 'again' ? 'ran again' : v.is === 'out' ? 'was left' : 'not drawn';
   return `<div class="xtest"><div class="xq">${q}</div>`
     + n.branches.map(b => `<div class="xbr"><span class="xval">${answer(b.value)}:</span> ${explNode(b.tree)}</div>`).join('')
     + `</div>`;
 }
+// the server accepts this much for an explanation; a strategy past it is
+// explained by the command line
+const EXPLAIN_MAX = 60 * 1024 * 1024;
 async function paintExplanation(p) {
   const box = $('sexpl');
   if (!box) return;
   if (!p.steps.length) { box.innerHTML = '<p class="status">No choice of the controller is decided on this branch.</p>'; return; }
-  if (!p._expl) {
+  const fail = (text) => { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = text; };
+  // an explanation is kept with its point; a failure is not, so that the
+  // point is asked again the next time it is chosen
+  let d = p._expl;
+  if (!d) {
+    const decisions = p.steps.map(st => st.after.map(n => n.id).join('.') + '>' + st.take.id).join(';');
+    if (decisions.length > EXPLAIN_MAX) {
+      fail(`This strategy has ${p.steps.length} decisions, too many to be explained on the page: sdcpi explain, or sdcpi pareto with --explain 1, explains it.`);
+      return;
+    }
     box.innerHTML = '<p class="status">Explaining\u2026</p>';
     const body = new URLSearchParams({
       process: $('proc').value, name: DOC.name || '',
       time: LAST.time ? '1' : '0',
       max_iter: LAST.max_iter === undefined ? '1' : String(LAST.max_iter),
-      decisions: p.steps.map(st => st.after.map(n => n.id).join('.') + '>' + st.take.id).join(';'),
+      decisions,
     });
     try {
       const r = await fetch('/api/explain', { method: 'POST', body });
-      p._expl = await r.json();
-    } catch (err) { p._expl = { error: String(err) }; }
-    if (LAST.points[SELECTED] !== p) return;   // another point was chosen meanwhile
+      const text = await r.text();
+      try { d = JSON.parse(text); } catch (_) { d = { error: text.trim() || `the server answered ${r.status}` }; }
+    } catch (err) { d = { error: `The explanation did not arrive (${err}).` }; }
+    if (!d.error) p._expl = d;
+    // the text was edited, or another point chosen, while the answer came
+    if (!LAST || LAST.points[SELECTED] !== p || !box.isConnected) return;
   }
-  const d = p._expl;
-  if (d.error) { box.innerHTML = '<div class="err"></div>'; box.firstChild.textContent = d.error; return; }
+  if (d.error) { fail(d.error); return; }
   box.innerHTML = d.explanations.map(e =>
-    `<div class="xchoice">The choice between ${label(e.options[0])} and ${label(e.options[1])} ${label(e.choice)} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
+    `<div class="xchoice">The choice${xref(e.choice)} between ${label(e.options[0])} and ${label(e.options[1])} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
     + `${e.tests} ${e.tests === 1 ? 'test' : 'tests'}${e.minimal ? '' : ', not known to be the fewest'}</span></div>`
     + explNode(e.tree)).join('')
     + `<div class="hint" style="margin-top:8px">Each tree reads the draws of nature alone, the j-th draw at a node with

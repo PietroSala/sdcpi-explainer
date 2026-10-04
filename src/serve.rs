@@ -51,6 +51,10 @@ const PAGE: &str = include_str!("serve/page.html");
 /// The largest request body accepted, and the largest time limit the page may
 /// ask for. A process is text and a generous one is a few kilobytes.
 const MAX_BODY: usize = 256 * 1024;
+/// The body of a request for an explanation carries the decisions of a
+/// strategy, one per history, and a strategy is far larger than the process
+/// it is a strategy of.
+const MAX_EXPLAIN_BODY: usize = 64 * 1024 * 1024;
 const MAX_LIMIT: f64 = 600.0;
 
 const EXAMPLE: &str = "\
@@ -505,8 +509,9 @@ fn request(stream: &mut TcpStream) -> Result<(String, String, String), String> {
             length = v.trim().parse().unwrap_or(0);
         }
     }
-    if length > MAX_BODY {
-        return Err(format!("the body is larger than the {MAX_BODY} bytes accepted\n"));
+    let accepted = if path == "/api/explain" { MAX_EXPLAIN_BODY } else { MAX_BODY };
+    if length > accepted {
+        return Err(format!("the body is larger than the {accepted} bytes accepted\n"));
     }
     let mut body = vec![0u8; length];
     reader

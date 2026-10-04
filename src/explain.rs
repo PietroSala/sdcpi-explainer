@@ -312,7 +312,12 @@ fn text_node(tree: &Tree, node: &Node, indent: usize, name: &dyn Fn(u32) -> Stri
         Node::Test { feature, branches } => {
             let d = tree.node(feature.node);
             let what = if tree.kind(feature.node) == Kind::Loop {
-                format!("of the loop {} over {}", feature.node, name(d.low))
+                // the name of a region is the one of its first task
+                if tree.kind(d.low) == Kind::Task {
+                    format!("of the loop {} over {}", feature.node, name(d.low))
+                } else {
+                    format!("of the loop {}, which starts with {}", feature.node, name(d.low))
+                }
             } else {
                 format!("at the nature node {} ({} or {})", feature.node, name(d.low), name(d.high))
             };
