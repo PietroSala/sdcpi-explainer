@@ -32,6 +32,24 @@ policies, every history of every policy enumerated:
              have pairwise distinct assignments indexed by the occurrences,
              the j-th draw at a node with what it gave: the reading the
              trees of the tool test;
+  passes     with loops or without, a draw is indexed by the passes it is
+             taken in: for every loop above its node, the outermost first,
+             the pass of that loop that is running, and at a loop, last,
+             the pass its region has just closed. No two draws of a history
+             have the same node and the same passes, and the histories at
+             which a choice is due have pairwise distinct assignments
+             indexed so: the reading the trees of the tool test. The exit a
+             loop is forced to at the bound is no draw and has no index;
+  beyond     the decision functions of a policy of the process at K passes,
+             read through the indices they know, decide the process at
+             K + 1 passes: at every choice met outside the passes past K
+             the assignment read is one the policy decided, the impact paid
+             outside those passes is the impact of the policy at K, and
+             the time is no less. A choice inside a pass past K is one the
+             policy never meets, and what is read there is counted apart.
+             The same is tried with the occurrences in place of the passes
+             and counted apart, as an observation: there it fails, a pass
+             past the bound moving the count of every later draw;
   reading    two sequences of draws that one policy meets at the same choice
              are told apart by the policy the proof builds, changed at one
              history, at which both are still met;
@@ -280,13 +298,14 @@ def enumerate_policy(t, K, rng, cap, policy=None, max_len=None):
     records = []
     policy = dict(policy or {})
 
-    def walk(states, trail, kinds, cost, prob):
+    def walk(states, trail, kinds, pos, cost, prob):
         if len(records) > cap:
             raise OverflowError
         s = states[-1]
         r, v, mv = moves(t, s, K)
-        rec = {"states": tuple(states), "trail": tuple(trail), "kinds": tuple(kinds), "rank": r, "witness": v,
-               "prob": prob, "cost": cost, "cut": False}
+        # pos: for every entry of the trail, the position of the state it was taken at
+        rec = {"states": tuple(states), "trail": tuple(trail), "kinds": tuple(kinds), "pos": tuple(pos),
+               "rank": r, "witness": v, "prob": prob, "cost": cost, "cut": False}
         records.append(rec)
         if r is None:
             return
@@ -299,15 +318,15 @@ def enumerate_policy(t, K, rng, cap, policy=None, max_len=None):
                 policy[key] = rng.choice([m[0] for m in mv])
             a = policy[key]
             (_, pr, nxt, c) = [m for m in mv if m[0] == a][0]
-            walk(states + [nxt], trail + [entry(t, s, v, nxt)], kinds + ["dec"], cost + c, prob * pr)
+            walk(states + [nxt], trail + [entry(t, s, v, nxt)], kinds + ["dec"], pos + [len(states) - 1], cost + c, prob * pr)
         elif r == 4 and len(mv) == 2:
             for (_, pr, nxt, c) in mv:
-                walk(states + [nxt], trail + [entry(t, s, v, nxt)], kinds + ["drw"], cost + c, prob * pr)
+                walk(states + [nxt], trail + [entry(t, s, v, nxt)], kinds + ["drw"], pos + [len(states) - 1], cost + c, prob * pr)
         else:
             (_, pr, nxt, c) = mv[0]
-            walk(states + [nxt], trail, kinds, cost + c, prob * pr)
+            walk(states + [nxt], trail, kinds, pos, cost + c, prob * pr)
 
-    walk([initial(t)], [], [], F(0), F(1))
+    walk([initial(t)], [], [], [], F(0), F(1))
     return records, policy
 
 
@@ -325,6 +344,44 @@ def enumerate_all(t, K, cap, max_len=None):
         for (_, _, nxt, _) in mv:
             walk(states + [nxt])
     walk([initial(t)])
+    return out
+
+
+def loops_above(t, v):
+    """The loops strictly above a node, the outermost first."""
+    out = []
+    u = t.parent[v]
+    while u is not None:
+        if t.kind[u] == LOOP:
+            out.append(u)
+        u = t.parent[u]
+    return out[::-1]
+
+
+def pass_index(t, s, v):
+    """The passes a draw at v is taken in, at the state s: for every loop
+    above v, the outermost first, the pass of its region that is running,
+    counted from 1, the count of the region being the passes it has closed;
+    and at a loop, last, the pass its region has just closed."""
+    cnt = s[1]
+    idx = [cnt[t.low[l]] + 1 for l in loops_above(t, v)]
+    if t.kind[v] == LOOP:
+        idx.append(cnt[t.low[v]])
+    return tuple(idx)
+
+
+def by_passes(t, rec):
+    """The draws of a history, each with its node and its passes."""
+    return [((e[0], pass_index(t, rec["states"][i], e[0])), e[1])
+            for e, k, i in zip(rec["trail"], rec["kinds"], rec["pos"]) if k == "drw"]
+
+
+def by_occurrences(rec):
+    """The draws of a history, each with its node and its occurrence."""
+    occ, out = {}, []
+    for (u, x) in draws(rec):
+        occ[u] = occ.get(u, 0) + 1
+        out.append(((u, occ[u]), x))
     return out
 
 
@@ -461,6 +518,18 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
             if len(set(nodes)) != len(nodes):
                 fail("assignment", f"a nature node drawn twice without loops: {draws(rec)}")
 
+    # passes: no two draws of a history have the same node and the same
+    # passes, no draw is taken at the bound, no pass is past it
+    for rec in finals:
+        idx = [k for k, _ in by_passes(t, rec)]
+        count("passes")
+        if len(set(idx)) != len(idx):
+            fail("passes", f"two draws of one history with the same node and passes: {idx}")
+        if K is not None and any(t.kind[u] == LOOP and q[-1] >= K for (u, q) in idx):
+            fail("passes", f"a draw of a loop at the bound {K}: {idx}")
+        if K is not None and any(x > K for (u, q) in idx for x in q):
+            fail("passes", f"a pass past the bound {K}: {idx}")
+
     # reading: two sequences of draws one policy meets at a choice are told
     # apart by the policy of the proof, changed at one history
     for v in t.choices:
@@ -509,6 +578,14 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
             if key in seen_o:
                 fail("occurrences", f"choice {v} due at two histories with the same assignment by occurrences {sorted(key, key=str)}")
             seen_o[key] = rec
+        # the assignment indexed by the passes
+        seen_p = {}
+        for rec in due:
+            key = frozenset(by_passes(t, rec))
+            count("passes")
+            if key in seen_p:
+                fail("passes", f"choice {v} due at two histories with the same assignment by passes {sorted(key, key=str)}")
+            seen_p[key] = rec
         if not t.loops:
             # the partial assignment of the nature nodes
             seen_a = {}
@@ -560,6 +637,87 @@ def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
             fail("recovered", "the rebuilt policy has another value")
     except Failure as e:
         fail("recovered", str(e))
+
+    # beyond: the decision functions at K passes, read through the indices
+    # they know, decide the process at K + 1 passes
+    if K is None or not t.loops:
+        return
+    time_K = sum(r["prob"] * (r["cost"] // TIME) for r in records if r["rank"] is None)
+    impact_K = sum(r["prob"] * (r["cost"] % TIME) for r in records if r["rank"] is None)
+    above = {u: loops_above(t, u) for u in range(t.n)}
+
+    def beyond(nested):
+        """The policy at K + 1 that reads, at a choice, the draws at the
+        indices the choice knows at K, and takes what the policy took after
+        them. Returns the choices met outside the passes past K, those among
+        them whose reading the policy never decided, the choices inside a
+        pass past K and those among them left undecided, the impact paid
+        outside the passes past K, and the time."""
+        G, known = {}, {}
+        for rec in records:
+            if rec["rank"] == 1:
+                a = by_passes(t, rec) if nested else by_occurrences(rec)
+                G[(rec["witness"], frozenset(a))] = policy[rec["states"]]
+                known.setdefault(rec["witness"], set()).update(k for k, _ in a)
+        out = {"met": 0, "missing": 0, "inside": 0, "undecided": 0, "kept": F(0), "time": F(0), "nodes": 0}
+
+        def walk(s, drw, occ, prob, kept, time):
+            out["nodes"] += 1
+            if out["nodes"] > 40 * cap:
+                raise OverflowError
+            r, v, mv = moves(t, s, K + 1)
+            if r is None:
+                out["kept"] += prob * kept; out["time"] += prob * time
+                return
+            if r == 1:
+                # a choice in a pass past K is one the policy at K never
+                # meets: whatever is taken there is paid by the gap
+                extra = any(s[1][t.low[l]] >= K for l in above[v])
+                out["inside" if extra else "met"] += 1
+                a = G.get((v, frozenset(e for e in drw if e[0] in known.get(v, ()))))
+                if a is None:
+                    out["undecided" if extra else "missing"] += 1
+                    a = t.low[v]
+                (_, pr, nxt, c) = [m for m in mv if m[0] == a][0]
+                walk(nxt, drw, occ, prob * pr, kept, time)
+            elif r == 4 and len(mv) == 2:
+                o2 = dict(occ); o2[v] = o2.get(v, 0) + 1
+                idx = pass_index(t, s, v) if nested else o2[v]
+                for (_, pr, nxt, c) in mv:
+                    walk(nxt, drw + [((v, idx), entry(t, s, v, nxt)[1])], o2, prob * pr, kept, time)
+            elif r == 5:
+                (_, pr, nxt, c) = mv[0]
+                # the tasks this step closes, outside every pass past K
+                closers = [u for u in t.tasks if s[0][u] >= 0 and nxt[0][u] == DONE]
+                paid = sum(t.impact[u] for u in closers if all(s[1][t.low[l]] < K for l in above[u]))
+                walk(nxt, drw, occ, prob * pr, kept + paid, time + c // TIME)
+            else:
+                (_, pr, nxt, c) = mv[0]
+                walk(nxt, drw, occ, prob * pr, kept, time)
+
+        walk(initial(t), [], {}, F(1), F(0), F(0))
+        return out
+
+    try:
+        b = beyond(True)
+        count("beyond")
+        counts["observed: choices inside a pass past the bound"] = counts.get("observed: choices inside a pass past the bound", 0) + b["inside"]
+        counts["observed: of which no decision is read"] = counts.get("observed: of which no decision is read", 0) + b["undecided"]
+        if b["missing"]:
+            fail("beyond", f"{b['missing']} of {b['met']} choices outside the passes past K read draws the policy never decided after")
+        elif b["kept"] != impact_K:
+            fail("beyond", f"the impact outside the passes past K is {b['kept']}, the policy at K pays {impact_K}")
+        elif b["time"] < time_K:
+            fail("beyond", f"the time at K + 1 is {b['time']}, less than {time_K} at K")
+        # the same with the occurrences: an observation, counted apart
+        nested_loops = any(above[l] for l in t.loops)
+        o = beyond(False)
+        counts["observed: occurrences beyond"] = counts.get("observed: occurrences beyond", 0) + 1
+        if o["missing"] or o["kept"] != impact_K:
+            name = "observed: occurrences misread beyond, loops inside loops" if nested_loops else "observed: occurrences misread beyond, no loop inside a loop"
+            counts[name] = counts.get(name, 0) + 1
+    except (OverflowError, RecursionError):
+        counts["beyond skipped for size"] = counts.get("beyond skipped for size", 0) + 1
 
 
 def main():

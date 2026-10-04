@@ -173,8 +173,8 @@
   .xchoice { margin: 10px 0 4px; font-weight: 600; }
   .xchoice span { font-weight: 400; color: var(--muted); }
   .xtest { margin: 3px 0 3px 4px; padding-left: 10px; border-left: 2px solid var(--line); }
-  .xq { font-size: 12.5px; color: var(--ink); }
-  .xbr { margin: 2px 0 2px 8px; }
+  .xq { font-size: 12.5px; color: var(--ink); margin: 2px 0; }
+  .xbr { margin: 2px 0 2px 10px; }
   .xval { color: var(--muted); }
   .xleaf { font-weight: 600; }
   #sview { margin: 0 0 8px; }
@@ -1485,23 +1485,40 @@ function paintStrategyView(p) {
   $('sexpl').hidden = !expl;
   if (expl) paintExplanation(p);
 }
-const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
 // A node named in a sentence of the explanation: with the detailed regions
 // its identifier follows the noun, without them the names of its children
 // say which node it is, the name of a region being the one of its first task.
 const xref = (n) => $('detail').checked ? ' ' + label(n) : '';
+// Where a draw is taken: the pass of every loop around its node, the
+// outermost first, so that a draw keeps its name whatever the other passes
+// did. With the detailed regions a loop is its identifier; without them
+// the loops are told apart by their depth.
+function passesText(n) {
+  const q = n.passes;
+  if (!q.length) return '';
+  if ($('detail').checked) return 'in ' + q.map(x => `pass ${x.pass} of the loop ${label(x.loop)}`).join(', ') + ', ';
+  if (q.length === 1) return `in pass ${q[0].pass} of the loop around it, `;
+  if (q.length === 2) return `in pass ${q[0].pass} of the outer loop and pass ${q[1].pass} of the inner one, `;
+  return `in passes ${q.map(x => x.pass).join(', ')} of the loops around it, the outermost first, `;
+}
+// What a test states: one draw, named by its passes, and the answer it
+// gave. The statement is true when the draw was taken and gave that answer,
+// and false in every other case: the other answer, or the draw not taken.
+function statement(n) {
+  if (!n.loop) {
+    return `${passesText(n)}the draw${xref(n.draw)} between ${label(n.options[0])} and ${label(n.options[1])} took ${label(n.value.child)}`;
+  }
+  const region = n.options[0];
+  const which = `the loop${xref(n.draw)} ` + (region.task ? `over ${label(region)}` : `that starts with ${h(region.name)}`);
+  // the draw after the last pass does not exist, the exit there being forced
+  return `${passesText(n)}${which} ${n.value.is === 'again' ? 'ran again' : 'was left'} after its pass ${n.pass}`;
+}
 function explNode(n) {
   if (n.take) return `<span class="xleaf">take ${label(n.take)}</span>`;
-  const nth = ordinal(n.occurrence);
-  const region = n.options[0];
-  const q = n.loop
-    ? `the ${nth} draw of the loop${xref(n.draw)} ` + (region.task ? `over ${label(region)}` : `that starts with ${h(region.name)}`)
-    : `the ${nth} draw${xref(n.draw)} between ${label(n.options[0])} and ${label(n.options[1])}`;
-  const answer = (v) => v.is === 'child' ? `took ${label(v.child)}`
-                      : v.is === 'again' ? 'ran again' : v.is === 'out' ? 'was left' : 'not drawn';
-  return `<div class="xtest"><div class="xq">${q}</div>`
-    + n.branches.map(b => `<div class="xbr"><span class="xval">${answer(b.value)}:</span> ${explNode(b.tree)}</div>`).join('')
-    + `</div>`;
+  const side = (head, t) => t.take
+    ? `<div class="xq"><span class="xval">${head}:</span> ${explNode(t)}</div>`
+    : `<div class="xq"><span class="xval">${head}:</span></div><div class="xbr">${explNode(t)}</div>`;
+  return `<div class="xtest">${side('if ' + statement(n), n.yes)}${side('otherwise', n.no)}</div>`;
 }
 // the server accepts this much for an explanation; a strategy past it is
 // explained by the command line
@@ -1541,8 +1558,11 @@ async function paintExplanation(p) {
     `<div class="xchoice">The choice${xref(e.choice)} between ${label(e.options[0])} and ${label(e.options[1])} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
     + `${e.tests} ${e.tests === 1 ? 'test' : 'tests'}${e.minimal ? '' : ', not known to be the fewest'}</span></div>`
     + explNode(e.tree)).join('')
-    + `<div class="hint" style="margin-top:8px">Each tree reads the draws of nature alone, the j-th draw at a node with
-       what it gave: the strategy decides by these, its own earlier decisions being determined by them.</div>`;
+    + `<div class="hint" style="margin-top:8px">Each test is one statement on one draw of nature, the draw named by the
+       pass of every loop around it. It is true when that draw was taken and gave that answer, and false otherwise: when
+       it gave the other answer, and when it was not taken at all. The exit a loop is forced to after its last pass is no
+       draw, and no test speaks of it. The strategy decides by the draws alone, its own earlier decisions being
+       determined by them.</div>`;
 }
 
 // The decisions of the strategy, SPAGE at a time, with a pager when there

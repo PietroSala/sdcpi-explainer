@@ -416,20 +416,27 @@ impl<'t> Engine<'t> {
         Ok(out)
     }
 
-    /// The history a trail writes, replayed from the initial state, and the
-    /// choice node that is the move where it ends, `None` at a final state.
+    /// The trail of a history read back: its entries typed, a decision or a
+    /// draw of one of its three kinds, and the choice due at its end, `None`
+    /// when the run is over. An identifier alone does not say what it is,
+    /// the one of a loop being written where the loop is started as a child
+    /// and where it is left, so the trail is walked through the clauses, as
+    /// the macro step walks them.
     ///
-    /// A trail, the `dh` of a recorded decision, is a list of identifiers,
-    /// what every decision and every draw started, and it does not say of
-    /// an entry which of the two it is: the identifier of a loop is written
-    /// both by the step that starts the loop as the child of an XOR node and
-    /// by the draw that leaves it. The replay walks the clauses as the macro
-    /// step does, reads one entry at every decision and at every draw taken
-    /// below the bound, none at a forced exit, and returns the entries
-    /// typed. It stops when the trail is spent and a choice is the move, or
-    /// at a final state.
-    pub fn replay(&self, dh: &[u32]) -> Result<(Vec<Entry>, Option<u32>), String> {
+    /// Beside every entry, the passes it is taken in: for every loop above
+    /// its node, the outermost first, the pass of that loop that is running,
+    /// counted from 1, and for the draw of a loop, last, the pass of its own
+    /// region that the draw follows. The exit a loop is forced to at the
+    /// bound is no draw: it writes nothing in the trail and has no entry.
+    pub fn replay(&self, dh: &[u32]) -> Result<(Vec<Entry>, Vec<Vec<u32>>, Option<u32>), String> {
         let t = self.tree;
+        let above = t.loops_above();
+        // the pass of every loop above `v` that is running: the count of a
+        // loop node is the passes its region has closed
+        let running = |s: &[i8], v: u32| -> Vec<u32> {
+            above[v as usize].iter().map(|&l| s[l as usize] as u32 + 1).collect()
+        };
+        let mut passes: Vec<Vec<u32>> = Vec::with_capacity(dh.len());
         let mut s = self.initial_state();
         let mut scratch = vec![0.0f64; t.k];
         let mut entries: Vec<Entry> = Vec::with_capacity(dh.len());
@@ -443,11 +450,11 @@ impl<'t> Engine<'t> {
                     if at != dh.len() {
                         return Err(format!("the trail goes on past the end of the run, at entry {at}"));
                     }
-                    return Ok((entries, None));
+                    return Ok((entries, passes, None));
                 }
                 Some((1, v)) => {
                     if at == dh.len() {
-                        return Ok((entries, Some(v)));
+                        return Ok((entries, passes, Some(v)));
                     }
                     let n = t.node(v);
                     let a = dh[at];
@@ -455,6 +462,7 @@ impl<'t> Engine<'t> {
                         return Err(format!("entry {at} of the trail, {a}, is no child of the choice {v}"));
                     }
                     at += 1;
+                    passes.push(running(&s, v));
                     s[a as usize] = 0;
                     entries.push(Entry::Decision(v, a));
                 }
@@ -465,6 +473,11 @@ impl<'t> Engine<'t> {
                     if closed < bound {
                         let x = *dh.get(at).ok_or(format!("the trail ends at the draw of the loop {v}"))?;
                         at += 1;
+                        // the passes of the loops above, and the pass of
+                        // this loop that the draw follows
+                        let mut index = running(&s, v);
+                        index.push(closed);
+                        passes.push(index);
                         if x == n.low {
                             s[n.low as usize] = 0;
                             s[v as usize] = closed as i8;
@@ -488,6 +501,7 @@ impl<'t> Engine<'t> {
                         return Err(format!("entry {at} of the trail, {x}, is no child of the nature node {v}"));
                     }
                     at += 1;
+                    passes.push(running(&s, v));
                     s[x as usize] = 0;
                     entries.push(Entry::Nature(v, x));
                 }

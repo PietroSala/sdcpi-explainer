@@ -145,14 +145,20 @@ options for to_objective
 options for explain
   explain is determine with the strategy it finds explained: for every
   choice node the strategy decides, a decision tree on the draws of nature
-  alone, the j-th draw at a nature node with the child it took, the j-th
-  draw of a loop with whether the region ran again or the loop was left, or
-  that the draw was not taken before the choice. The strategy decides by
-  these and by nothing else, its own earlier decisions being determined by
-  the draws. The tree has the fewest tests, found by an exact search within
-  a budget, and says so when it is not known to; --explain-json F writes the
-  trees as JSON. On determine, --explain 1 does the same, and on pareto it
-  explains the strategy of every point, in the report and in the JSON.
+  alone. A test is one statement on one draw: the draw at a nature node took
+  this child, or a loop ran again, or was left, after this pass of its. The
+  statement is true when the draw was taken and gave that answer, and false
+  in every other case, the other answer or the draw not taken; a tree is a
+  nest of if and otherwise. Under loops a draw is named by the passes it
+  is taken in, the pass of every loop above its node, the outermost first,
+  so that it keeps its name whatever the other passes did. The exit a loop
+  is forced to at --max-iter is no draw and no test speaks of it. The
+  strategy decides by the draws and by nothing else, its own earlier
+  decisions being determined by them. The tree has the fewest tests, found
+  by an exact search within a budget, and says so when it is not known to;
+  --explain-json F writes the trees as JSON. On determine, --explain 1 does
+  the same, and on pareto it explains the strategy of every point, in the
+  report and in the JSON.
 
 options for determine
   --B a,b,...           the budget B, one value per component, or the named

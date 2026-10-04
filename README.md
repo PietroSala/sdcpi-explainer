@@ -101,32 +101,79 @@ reads the draws and nothing else.
     sdcpi pareto  F.yaml --onephase 1 --time 1 --explain 1 --json out.json
 
 For every choice node the strategy decides, the explainer builds a decision
-tree whose tests ask what one draw gave: the `j`-th draw at a nature node
-with the child it took, the `j`-th draw of a loop with whether the region
-ran again or the loop was left, or that the draw was not taken before the
-choice. With loops a node is drawn once per pass, and the occurrence is
-what keeps the passes apart; the histories at which a strategy meets a
-choice always differ in one such value, so a tree exists. The tree
-returned has the fewest tests, and among those the least depth, found by
-an exact search on the sets of histories within a budget of two hundred
-thousand sets; past the budget the search goes on greedily and the
+tree. Three rules make it.
+
+**A test is one statement on one draw.** "The draw between A and B took A",
+"the loop ran again after its pass 2", "the loop was left after its pass
+1". The statement is true when that draw was taken and gave that answer,
+and false in every other case: when the draw gave the other answer, and
+when it was not taken at all, the run not having come to that pass or not
+to that node in it. A test has two branches, and a tree reads as a nest of
+"if this, otherwise".
+
+**A draw is named by its passes.** Under loops a draw is taken at one node
+once per pass, and it is named by the pass of every loop above its node,
+the outermost first: "in pass 3 of the loop 9, pass 2 of the loop 4, the
+draw at the nature node 2". The index is nested as the loops are, so a
+draw keeps its name whatever the other passes did. A count of the draws at
+a node along the run would not: the second draw at a node of an inner loop
+is its second pass when the loop ran again, and the first pass of the next
+outer pass when it did not. No two draws of a run have the same node and
+the same passes, and two histories at which a strategy meets a choice
+always differ in the truth of one statement, so a tree exists.
+
+**A forced exit is no draw.** After its last pass, `--max-iter`, a loop is
+left by every run: that exit tells nothing apart, the trail does not write
+it, and no test speaks of it. The draw after the pass `j` of a loop exists
+for `j` below the bound only.
+
+The tree returned has the fewest tests, and among those the least depth,
+found by an exact search on the sets of histories within a budget of two
+hundred thousand sets; past the budget the search goes on greedily and the
 explanation says that it is not known to be the fewest. On the running
 example, for the strategy that mends and then follows the redo:
 
     choice 4 (Swap or Mend): 1 history, 0 tests, the fewest
       take Mend
     choice 16 (Courier or Counter): 2 histories, 1 test, the fewest
-      the 1st draw at the nature node 8 (Redo or Pass):
-        took Redo: take Counter
-        took Pass: take Courier
+      if the draw at the nature node 8 (Redo or Pass) took Redo: take Counter
+      otherwise: take Courier
+
+and on a loop inside a loop, `(0.5 ((0.5 (A ^[0.5] B)) , (C ^ D)))` at two
+passes, the head of a tree:
+
+    choice 7 (C or D): 42 histories, 10 tests, the fewest
+      if in pass 1 of the loop 9, pass 1 of the loop 4, the draw at the nature node 2 (A or B) took A:
+        if in pass 1 of the loop 9, pass 2 of the loop 4, the draw at the nature node 2 (A or B) took B:
+          if in pass 2 of the loop 9, pass 1 of the loop 4, the draw at the nature node 2 (A or B) took A: take C
+          otherwise:
+            if in pass 2 of the loop 9, the loop 4, which starts with A, was left after its pass 1: take D
+            otherwise: take C
+        otherwise: take C
+
+**Past the bound.** A tree is a function of any run, every statement being
+true or false of it, so it decides also a run that goes on past the bound,
+where the exit is a draw again. Outside the passes past the bound it takes
+what the strategy takes, the statements on the earlier passes keeping their
+truth; inside them it takes some branch, and whatever is taken there is
+paid within `continued`, the gap of the forced exits. The check script
+tries it at one pass more: `beyond`, no failure; with a count of the draws
+in place of the passes the reading breaks as soon as a loop sits inside a
+loop, which is why the index is nested.
 
 `explain` is `determine --explain 1`; `--explain-json F` writes the trees,
 and on `pareto` the option explains the strategy of every point, in the
-report and in the JSON. On the page the strategy of a chosen point has two
-views, its decisions history by history and its explanation, the trees
-drawn with their tests indented; the page asks the server for them at
-`POST /api/explain`, with the process and the decisions of the point. A
-strategy the search left partial is explained on the histories it decides.
+report and in the JSON. A leaf is `{"take": node}`; a test is `{"draw":
+node, "loop": bool, "options": [...], "passes": [{"loop": node, "pass":
+i}, ...], "pass": j, "value": {"is": "child", "child": node} | {"is":
+"again"} | {"is": "out"}, "yes": tree, "no": tree}`, `passes` the loops
+above the node of the draw from the outermost, `pass` at a loop only, the
+pass of its own the draw follows. On the page the strategy of a chosen
+point has two views, its decisions history by history and its explanation;
+the page asks the server for the trees at `POST /api/explain`, with the
+process and the decisions of the point. A strategy the search left partial
+is explained on the histories it decides. The explainer on a count of the
+draws, with three-way tests, is the tag `explainer-occurrences`.
 
 ## The model
 

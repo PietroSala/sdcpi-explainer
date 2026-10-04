@@ -136,6 +136,28 @@ impl Tree {
     }
 
     #[inline]
+    /// The loops strictly above every node, the outermost first, at the
+    /// identifier of the node: what indexes a draw by the passes it is
+    /// taken in.
+    pub fn loops_above(&self) -> Vec<Vec<u32>> {
+        let mut above = vec![Vec::new(); self.n_nodes as usize + 1];
+        let mut stack: Vec<(u32, Vec<u32>)> = vec![(self.root, Vec::new())];
+        while let Some((v, loops)) = stack.pop() {
+            let n = self.node(v);
+            let mut below = loops.clone();
+            if n.kind == Kind::Loop {
+                below.push(v);
+            }
+            above[v as usize] = loops;
+            for c in [n.low, n.high] {
+                if c != 0 {
+                    stack.push((c, below.clone()));
+                }
+            }
+        }
+        above
+    }
+
     pub fn kind(&self, id: u32) -> Kind {
         self.nodes[id as usize].kind
     }
