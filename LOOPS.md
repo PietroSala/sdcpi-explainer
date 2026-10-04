@@ -82,38 +82,48 @@ truncated one. The unbounded bounds hold for the truncated process from above
 
 ## The gap at a forced exit
 
-At a forced exit along a path `h` of probability `P(h)`, the unbounded
-process would still run `p / (1 - p)` passes in expectation, each worth a
-charge of `R` **in the unbounded process**, the loops inside `R` unbounded
-too, since the passes denied run there: the expected cost of the strategy in
-the unbounded process exceeds its cost in the truncated one by a vector in
-`P(h) · [L̂∞(R), Û∞(R)] · p / (1 - p)`, summed over the forced exits of the
-strategy. The engine accumulates this interval along every history (`gap`,
-`g_hat` scaled by the probability) and over every frontier, and reports it
-per point as `continued`, lower and upper. For the time the lower bound is
-taken as zero when the loop sits under a parallel node, the passes of one
-branch not lengthening the whole run for certain.
+The search decides the process truncated at `MAX_ITER` passes, and its
+strategies say nothing past the bound. In the unbounded process the exit
+at the bound is a draw: with `1 - p` the loop is left, and the run is still
+a run of the truncated process; with `p` the region runs again, and from
+that state on the run is one the search never looked at. **Whatever is
+decided from there**, what the run still pays lies between the two bounds
+of the unbounded process at that state, `L∞` and `U∞` of the whole process
+with the region started again. So, for a strategy and any policy of the
+unbounded process that takes what the strategy takes until the first draw
+past the bound:
 
-**What the interval is the interval of** (settled 2026-10-04, Proposition
-"Where a policy has a continuation" of the note). "The strategy in the
-unbounded process" is a policy that continues it: one that decides, outside
-the passes past the bound, as the strategy decides in the run within the
-bound, the run of the truncated process with the same entries, each named
-by its node and by the pass of every loop above it. When no loop sits under
-a parallel node every strategy has one, and the interval is its gap. Under
-a parallel node the passes past the bound take time, a choice of the other
-branch may come due before a draw that precedes it in the truncated
-process, and a strategy that reads that draw has no continuation: the
-interval is then the interval of no policy. The tool reports `continued`
-in both cases and does not tell them apart.
+- a run of the truncated process of probability `P`, with `S` the product
+  of `1 - p` over the forced exits it met, counts for `P · S · cost`;
+- a forced exit met after a path of probability `P`, with `S` so far and
+  `C` paid so far, counts for `P · S · p · (C + [L∞, U∞])`, the bounds at
+  the state where the region runs again.
 
-For a frontier accepted before it closed, an apex, the gap also counts, for
-every open history, the shift of the bounds of its state from the truncated
-to the unbounded recursion, `P(h) · [L∞_s - L_s, U∞_s - U_s]`: the forced
-exits the completions of the partial strategy have still to meet. So the
-bounds of a frontier with the loops unbounded are its two sums plus
-`continued`, whether the frontier is closed or not, and the gap of a point
-does not depend on where the accept fired.
+The two sums are the ends between which the value lies with the loops
+unbounded, and `continued` is what they add to the value of the point,
+lower and upper. The engine carries `S` and the accumulated terms along
+every history (`stay`, `gap`, `g_hat` scaled by the probability) and over
+every frontier. The lower end may be negative in a component: past the
+bound the run is free, and may take a cheaper branch than the strategy
+takes after the loop. The interval holds with a loop under a parallel node
+as elsewhere, and it shrinks as `p^MAX_ITER`.
+
+Until 2026-10-04 `continued` was the expected cost of the passes denied
+alone, `P(h) · p / (1 - p) · [L̂∞(R), Û∞(R)]` per forced exit, which assumes
+that everything else goes as in the strategy. Under a loop in a parallel
+branch that is not so, the passes past the bound moving in time the draws
+and the choices of the other branch: a strategy may then have no
+continuation at all, and the old interval was the interval of no policy.
+The tag `continued-denied-passes` is that version. The note of the paper
+keeps the narrower interval as a statement on the strategies that do
+continue, and says when they do.
+
+For a frontier accepted before it closed, an apex, an open history of
+probability `P`, with `S` and cost `C`, counts for `P · S · (C + [L∞_s,
+U∞_s])` at its state `s`, where the two sums of the frontier count `P · (C
++ [L_s, U_s])`: `continued` carries the difference, so the bounds of a
+frontier with the loops unbounded are its two sums plus `continued`,
+whether the frontier is closed or not.
 
 ## Limits
 

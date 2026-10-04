@@ -689,8 +689,10 @@ class Suite:
                 continue
             low = [Fraction(v) for v in cont["low"]]
             up = [Fraction(v) for v in cont["up"]]
-            rep.check("loops", all(0 <= low[c] <= up[c] for c in range(k)),
-                      f"{inst.name}: the point {p['value']} has the continued gap low {fmt(low)} up {fmt(up)}: negative, or low above up")
+            # the lower end may be negative: past the bound the run is free,
+            # and may be cheaper than what the strategy does after the loop
+            rep.check("loops", all(low[c] <= up[c] for c in range(k)),
+                      f"{inst.name}: the point {p['value']} has the continued gap low {fmt(low)} up {fmt(up)}: low above up")
 
     def check_loops_k(self, inst: Instance):
         """On a choice-free instance with loops: K = 1, 2, 3 and inf."""
@@ -712,13 +714,20 @@ class Suite:
         for (K1, v1, l1, u1, _, _, c1), (K2, v2, l2, u2, _, _, c2) in zip(series, series[1:]):
             rep.check("loops-k", all(v2[c] >= v1[c] for c in range(k)), f"{inst.name}: the value falls from K={K1} {fmt(v1)} to K={K2} {fmt(v2)}\n    {c1}\n    {c2}")
             rep.check("loops-k", all(u2[c] <= u1[c] for c in range(k)), f"{inst.name}: the upper gap grows from K={K1} {fmt(u1)} to K={K2} {fmt(u2)}\n    {c1}\n    {c2}")
-            rep.check("loops-k", all(l2[c] <= l1[c] for c in range(k)), f"{inst.name}: the lower gap grows from K={K1} {fmt(l1)} to K={K2} {fmt(l2)}\n    {c1}\n    {c2}")
         r = self.run(["bound", inst.yaml, "--time", "1", "--max-iter", "inf"])
         if not rep.check("loops-k", r.rc == 0, f"{inst.name}: bound --max-iter inf exit {r.rc}: {r.err.strip()}\n    {r.cmd()}"):
             return
         b = parse_bound(r.out)
         if not rep.check("loops-k", "U" in b and "L" in b, f"{inst.name}: bound --max-iter inf prints no bounds\n    {r.cmd()}"):
             return
+        # the lower gap falls with K where the two bounds of the unbounded
+        # process agree, the lower end being then the unbounded value. Where
+        # they do not, the time under a parallel node, the lower end is a
+        # bound that tightens as the value grows, and their difference need
+        # not fall
+        tight = [c for c in range(k) if abs(b["U"][c] - b["L"][c]) <= 1e-9]
+        for (K1, v1, l1, u1, _, _, c1), (K2, v2, l2, u2, _, _, c2) in zip(series, series[1:]):
+            rep.check("loops-k", all(l2[c] <= l1[c] for c in tight), f"{inst.name}: the lower gap grows from K={K1} {fmt(l1)} to K={K2} {fmt(l2)} where the unbounded bounds agree\n    {c1}\n    {c2}")
         for K, v, lo, up, L, U, cmd in series:
             rep.check("loops-k", all(b["U"][c] >= float(U[c]) - 1e-6 and b["L"][c] >= float(L[c]) - 1e-6 for c in range(k)),
                       f"{inst.name}: bound --max-iter inf U {b['U']} L {b['L']} lies below the bounds at K={K}: U {fmt(U)} L {fmt(L)}\n    {r.cmd()}")

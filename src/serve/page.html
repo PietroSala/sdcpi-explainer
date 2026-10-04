@@ -349,7 +349,7 @@
   <div class="hint">The iterations are the passes a loop makes in one activation before its
     exit is forced, an inner loop making at most that many per pass of the loop above it.
     A point whose strategy met a forced exit shows, under its expected values, what the
-    loops would still pay if they ran on.</div>
+    value becomes with the loops unbounded, whatever is taken past the bound.</div>
   </details>
   <details class="group" id="g-computation">
     <summary>Computation</summary>
@@ -1365,10 +1365,15 @@ function maxIterSent() {
   const v = $('maxiter').value;
   return /^\d+$/.test(v) ? Math.min(50, Math.max(1, +v)) : 1;
 }
-// What the loops of a point would still pay if they ran on past the bound on
-// their passes, when its strategy met a forced exit: per component, in the
-// order of the table, the lower and the upper increment; nothing otherwise.
+// What the value of a point becomes with the loops unbounded, when its
+// strategy met a forced exit: per component, in the order of the table, the
+// lower and the upper increment; nothing otherwise. From the first draw that
+// runs a loop again past its last pass the rest of the run is paid between
+// the two bounds of the unbounded process, whatever is taken there: so the
+// lower increment may be negative, the run being free to take past the
+// bound a cheaper branch than the strategy takes after the loop.
 const num = (v) => String(+v);
+const signed = (v) => (+v < 0 ? '\u2212 ' + String(-v) : '+ ' + String(+v));
 function continuedParts(d, p) {
   if (!p.continued) return [];
   const names = d_names(d);
@@ -1376,9 +1381,9 @@ function continuedParts(d, p) {
 }
 // the compact form of the table, the upper increments alone, and the full
 // one, every component with its two ends, one value when they agree
-const continuedCompact = (d, p) => continuedParts(d, p).map(c => `+${c.up}`).join(', ');
+const continuedCompact = (d, p) => continuedParts(d, p).map(c => signed(c.up).replace(' ', '')).join(', ');
 const continuedText = (d, p) => continuedParts(d, p)
-  .map(c => `${c.name} + ${c.low === c.up ? c.up : c.low + ' to + ' + c.up}`).join('; ');
+  .map(c => `${c.name} ${c.low === c.up ? signed(c.up) : signed(c.low) + ' to ' + signed(c.up)}`).join('; ');
 
 // A node in a sentence: its name, or with the detailed regions on, the
 // identifier that the drawing shows, "Mend(5)" for a task and the bare
@@ -1442,13 +1447,13 @@ function select(i, reveal = true) {
     const dec = v.includes('/') ? ` (${String(+p.approx[j])})` : '';
     return `<span style="margin-right:14px">${h(names[j])} ${arrow(LAST, j)} <code>${v}</code>${dec}</span>`;
   }).join('');
-  // what the loops would still pay past the bound on their passes, when the
-  // strategy met a forced exit: per component, the lower and the upper increment
+  // what the value becomes with the loops unbounded, when the strategy met
+  // a forced exit: per component, the lower and the upper increment
   const K = LAST.max_iter;
   const cont = p.continued
-    ? `<div style="margin-bottom:7px">if the loops ran on past ${K} ${K === 1 ? 'pass' : 'passes'}: `
+    ? `<div style="margin-bottom:7px" title="The strategy is what the search found within ${K} ${K === 1 ? 'pass' : 'passes'}. From the first draw that runs a loop again past them, the rest of the run is paid between the two bounds of the process with its loops unbounded, whatever is taken there: the value lies between the value of the point plus the first number and plus the second.">with the loops unbounded, whatever is taken past ${K} ${K === 1 ? 'pass' : 'passes'}: `
       + continuedParts(LAST, p).map(c => `<span style="margin-right:14px">${h(c.name)} `
-          + (c.low === c.up ? `<code>+ ${c.up}</code>` : `<code>+ ${c.low}</code> to <code>+ ${c.up}</code>`)
+          + (c.low === c.up ? `<code>${signed(c.up)}</code>` : `<code>${signed(c.low)}</code> to <code>${signed(c.up)}</code>`)
           + `</span>`).join('')
       + `</div>`
     : '';

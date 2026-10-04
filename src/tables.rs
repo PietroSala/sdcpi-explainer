@@ -117,6 +117,9 @@ pub struct Extension<'a, N: Num> {
     /// The gap the forced exits of the loops left along the macro step,
     /// `2k` values, lower then upper, unscaled as `impact` is.
     pub gap: Box<[N]>,
+    /// The probability that the unbounded run stays within the bound along
+    /// the macro step.
+    pub stay: N::Prob,
     pub prob: N::Prob,
     pub cs: &'a ChoiceState<'a, N>,
 }
@@ -193,8 +196,17 @@ pub struct History<'a, N: Num> {
     pub dh: Box<[u32]>,
     /// `I_dh`, the impact accumulated along the path.
     pub impact: Box<[N]>,
-    /// `G_dh`, the gap accumulated along the path, `2k` values, unscaled.
+    /// `G_dh`, the gap accumulated along the path, `2k` values, lower then
+    /// upper, unscaled: over the forced exits of the path, the probability
+    /// that the unbounded run leaves the bound there, having stayed until
+    /// then, times what the path had paid plus the bound of the unbounded
+    /// process at the state it leaves to; minus `I_dh` times the
+    /// probability of having left somewhere along the path.
     pub gap: Box<[N]>,
+    /// `S_dh`, the probability that the unbounded run stays within the
+    /// bound along the path: the product, over its forced exits, of the
+    /// probabilities of leaving the loop there.
+    pub stay: N::Prob,
     /// `P_dh`, the product of the transition probabilities along the path.
     pub prob: N::Prob,
     /// The choice state the path ends in, shared with every other history that
@@ -205,15 +217,14 @@ pub struct History<'a, N: Num> {
     pub e_hat: Box<[N]>,
     /// `P_dh * (I_dh + L_cs)`, the contribution to the rejecting sum.
     pub l_hat: Box<[N]>,
-    /// `P_dh * G_dh`, the gap of the path scaled by its probability: what
-    /// the unbounded process would still pay, from below and from above, in
-    /// the passes the loops along the path were denied.
+    /// `P_dh * G_dh`, the gap of the path scaled by its probability.
     pub g_hat: Box<[N]>,
-    /// `P_dh * (L^inf_cs - L_cs)` then `P_dh * (U^inf_cs - U_cs)`, `2k`
-    /// values: what the bounds of the state still to run would gain with the
-    /// loops unbounded, counted for the open histories of a frontier so that
-    /// the gap of a frontier accepted before it closed covers the forced
-    /// exits its completions have still to meet.
+    /// `P_dh * (S_dh L^inf_cs - L_cs)` then `P_dh * (S_dh U^inf_cs - U_cs)`,
+    /// `2k` values: what the bounds of the state still to run become with
+    /// the loops unbounded, weighed by the probability of still being within
+    /// the bound there, counted for the open histories of a frontier so that
+    /// the gap of a frontier accepted before it closed covers what its
+    /// completions have still to meet.
     pub d_hat: Box<[N]>,
     low: OnceLock<&'a Expansion<'a, N>>,
     high: OnceLock<&'a Expansion<'a, N>>,
@@ -366,6 +377,7 @@ impl<'a, N: Num> Store<'a, N> {
                 decisions: o.decisions.into_boxed_slice(),
                 impact: o.impact.into_boxed_slice(),
                 gap: o.gap.into_boxed_slice(),
+                stay: o.stay,
                 prob: o.prob,
                 cs: self.intern_cs(o.state, o.stop),
             })
@@ -383,6 +395,7 @@ impl<'a, N: Num> Store<'a, N> {
         dh: Vec<u32>,
         impact: Vec<N>,
         gap: Vec<N>,
+        stay: N::Prob,
         prob: N::Prob,
         cs: &'a ChoiceState<'a, N>,
     ) -> &'a History<'a, N> {
@@ -403,16 +416,17 @@ impl<'a, N: Num> Store<'a, N> {
         let g_hat: Vec<N> = gap.iter().map(|g| g.scale(&prob)).collect();
         let mut d_hat: Vec<N> = Vec::with_capacity(2 * k);
         for c in 0..k {
-            d_hat.push(cs.lower_inf[c].sub(&cs.lower[c]).scale(&prob));
+            d_hat.push(cs.lower_inf[c].scale(&stay).sub(&cs.lower[c]).scale(&prob));
         }
         for c in 0..k {
-            d_hat.push(cs.upper_inf[c].sub(&cs.upper[c]).scale(&prob));
+            d_hat.push(cs.upper_inf[c].scale(&stay).sub(&cs.upper[c]).scale(&prob));
         }
         let record = History {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             dh: dh.clone().into_boxed_slice(),
             impact: impact.into_boxed_slice(),
             gap: gap.into_boxed_slice(),
+            stay,
             prob,
             cs,
             e_hat: e_hat.into_boxed_slice(),
@@ -464,10 +478,22 @@ impl<'a, N: Num> Store<'a, N> {
             for c in 0..k {
                 impact.push(elected.impact[c].add(&ext.impact[c]));
             }
-            // the gap of the path: what the loops left behind so far, the
-            // macro step added
-            let gap: Vec<N> = (0..2 * k).map(|c| elected_gap(elected, c).add(&ext.gap[c])).collect();
-            let h = self.intern_history(dh, impact, gap, N::prob_mul(&elected.prob, &ext.prob), ext.cs);
+            // the gap of the path. With S the probability of having stayed
+            // within the bound up to the elected history, G the gap there,
+            // g, s and i the gap, the stay and the impact of the macro step:
+            // G' = G + S g - (1 - S) i, the macro step counting for what the
+            // run had not left yet, and its impact being no cost of the runs
+            // that had; S' = S s
+            let gone = N::prob_complement(&elected.stay);
+            let gap: Vec<N> = (0..2 * k)
+                .map(|c| {
+                    elected_gap(elected, c)
+                        .add(&ext.gap[c].scale(&elected.stay))
+                        .sub(&ext.impact[c % k].scale(&gone))
+                })
+                .collect();
+            let stay = N::prob_mul(&elected.stay, &ext.stay);
+            let h = self.intern_history(dh, impact, gap, stay, N::prob_mul(&elected.prob, &ext.prob), ext.cs);
             for c in 0..2 * k {
                 gap_delta[c] = gap_delta[c].add(&h.g_hat[c]);
             }
@@ -509,7 +535,7 @@ impl<'a, N: Num> Store<'a, N> {
             .into_iter()
             .map(|o| {
                 let cs = self.intern_cs(o.state, o.stop);
-                self.intern_history(o.decisions, o.impact, o.gap, o.prob, cs)
+                self.intern_history(o.decisions, o.impact, o.gap, o.stay, o.prob, cs)
             })
             .collect())
     }

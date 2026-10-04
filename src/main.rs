@@ -1085,7 +1085,8 @@ fn run_determine<N: Num>(
                 .collect();
             println!("accepting      {}", fmt_exact(&shown));
         }
-        // what the loops would still pay past the bound on their passes
+        // what the loops unbounded add to the value, whatever is taken past
+        // the bound: a lower end may be negative
         if s.continued.iter().any(|g| g.to_f64() != 0.0) {
             let k = s.continued.len() / 2;
             let side = |v: &[N]| -> Vec<f64> { v.iter().map(|x| x.to_f64()).collect() };
@@ -1475,7 +1476,8 @@ fn cmd_pareto(args: &[String]) -> i32 {
             }
             None => println!("  witness      none"),
         }
-        // what the loops would still pay beyond the bound on their passes
+        // what the loops unbounded add to the value, whatever is taken past
+        // the bound: a lower end may be negative
         if p.continued.iter().any(|g| g.numer().sign() != num_bigint::Sign::NoSign) {
             let k = p.continued.len() / 2;
             let (up, low) = tree.shown_bounds(&p.continued[k..], &p.continued[..k]);

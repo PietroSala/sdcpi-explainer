@@ -39,8 +39,9 @@ over the expected time and the impacts, the time first. The field "Max
 iterations", 1 by default and greyed out while the process has no loop, is the `--max-iter` of the command line, the
 passes a loop makes in one activation before its exit is forced; a point
 whose strategy met a forced exit shows under its expected values what the
-loops would still pay if they ran on, lower to upper per component, and the
-table carries the upper increments in a column "loops" of its own. The
+value becomes with the loops unbounded, whatever is taken past the bound,
+lower to upper per component, and the table carries the upper increments in
+a column "loops" of its own. The
 server is in the binary, so there is nothing to install beyond what is
 already there, it runs on the three desktop systems and inside a container
 alike, and it binds `127.0.0.1` and never every address, because it runs a
@@ -153,28 +154,21 @@ passes, the head of a tree:
 
 **Past the bound.** A tree is a function of any run, every statement being
 true or false of it, so it decides also a run that goes on past the bound,
-where the exit is a draw again. Whether it then plays the strategy depends
-on where the loops sit.
+where the exit is a draw again. Nothing more is asked of it there. Within
+the bound it is the strategy, exactly; from the first draw that runs a loop
+again past its last pass it takes some branch, possibly always the same,
+and the whole rest of the run is paid between the two bounds of the
+unbounded process at that state. That is the interval `continued` of the
+point (see `LOOPS.md`), which holds whatever is taken past the bound and
+wherever the loops sit. The check script and the suite try it at one pass
+more: the explanation is the strategy up to the first draw past the bound,
+and its value stays under the upper end of `continued`.
 
-- *No loop under a parallel node.* While a loop runs nothing else does, the
-  passes past the bound are blocks that can be cut out of the run, and what
-  is left is a run within the bound. Outside those passes the tree takes
-  what the strategy takes, the statements on the draws within the bound
-  keeping their truth; inside them it takes some branch, and whatever is
-  taken there is paid within `continued`, the gap of the forced exits.
-  This is proved in the note (Corollary "The explanation past the bound").
-- *A loop under a parallel node.* The passes past the bound take time, and
-  the draws of the other branch move before or after a choice. A strategy
-  that reads, at a choice, a draw that those passes move after the choice
-  cannot be played past the bound at all; and where it can, a tree that
-  reads a draw they move before the choice departs from it. `continued` is
-  then the gap of the policies that continue the strategy, if there are
-  any, and the tool does not tell which case a point is in.
-
-The check script tries all of it at one pass more: `within`,
-`continuation`, `beyond`, and a counterexample checked by hand; with a
-count of the draws in place of the passes the reading breaks as soon as a
-loop sits inside a loop, which is why the index is nested.
+The explanation does not always take, past the bound, what the strategy
+would take there: under a loop in a parallel branch the passes past the
+bound move the draws of the other branch in time, and a tree that reads one
+of them may take another branch. The note of the paper says when it does
+continue the strategy; the tool does not rely on it.
 
 `explain` is `determine --explain 1`; `--explain-json F` writes the trees,
 and on `pareto` the option explains the strategy of every point, in the
@@ -340,18 +334,22 @@ search uses. `sdcpi bound <instance> --max-iter K` prints the two bounds at
 the initial state, the exact optimum of every component and the worst breach
 of the enclosure over every reachable choice state, which must stay at zero.
 
-At a forced exit along a path `h` of probability `P(h)`, the unbounded
-process would still run `p / (1 - p)` passes in expectation, each worth a
-charge of `R`: the expected cost of the strategy in the unbounded process
-exceeds its cost in the truncated one by a vector in
-`P(h) · [L̂(R), Û(R)] · p / (1 - p)`, summed over the forced exits of the
-strategy. The engine accumulates this interval along every history and over
-every frontier and reports it per point, lower and upper; the page shows it
-under the expected values of a point, as "if the loops ran on past `K`
-passes", and the upper increments alone in the column "loops" of the table.
-For the time the lower end is taken as zero when the loop sits under a
-parallel node, the passes of one branch not lengthening the whole run for
-certain.
+In the unbounded process the exit at the bound is a draw: with `1 - p` the
+loop is left, with `p` the region runs again and the run is one the search
+never looked at. Whatever is decided from there, what the run still pays
+lies between the two bounds of the unbounded process at that state. So a
+run of the truncated process counts for its cost with the probability of
+never leaving the bound, and every forced exit met after a path of
+probability `P(h)` adds `P(h) · S · p · (cost so far + [L∞, U∞])`, with
+`S` the probability of not having left before and the bounds taken where
+the region runs again. The engine accumulates the two sums along every
+history and over every frontier and reports, per point, what they add to
+its value, lower and upper; the page shows it under the expected values of
+a point, as "with the loops unbounded, whatever is taken past `K` passes",
+and the upper increments alone in the column "loops" of the table. The
+lower increment may be negative: past the bound the run is free, and may
+take a cheaper branch than the strategy takes after the loop. `LOOPS.md`
+has the statement and what the interval was before 2026-10-04.
 
 `examples/line.cpi` is an eight-task manufacturing line in this grammar, and
 the whole flow is one pipe:

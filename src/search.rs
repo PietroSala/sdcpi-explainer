@@ -273,12 +273,15 @@ impl<'a, N: Num> Frontier<'a, N> {
         }
     }
 
-    /// What the loops would still pay past the bound on their passes, `2k`
+    /// What the loops unbounded add to the two sums of the frontier, `2k`
     /// values, lower then upper: the sum over every history, open or final,
-    /// of `P(h) G(h)`, the forced exits met, plus the sum over the open
-    /// histories of `P(h) (X^inf - X)` at their states, the forced exits
-    /// their completions have still to meet; the bounds of the frontier with
-    /// the loops unbounded are the two sums of the frontier plus this.
+    /// of `P(h) G(h)`, the forced exits met, each counted for the bounds of
+    /// the unbounded process at the state where the region runs again and
+    /// for the probability of leaving the bound there; plus the sum over
+    /// the open histories of `P(h) (S(h) X^inf - X)` at their states, what
+    /// their completions have still to meet. The bounds of the frontier
+    /// with the loops unbounded are its two sums plus this, whatever a
+    /// policy takes past the bound. A value may be negative.
     fn continued(&self, k: usize) -> Vec<N> {
         (0..2 * k).map(|c| self.sums[3 * k + c].add(&self.sums[5 * k + c])).collect()
     }
@@ -386,9 +389,9 @@ pub struct Strategy<N: Num> {
     /// `E(F)` on the winning frontier: what every completion of the partial
     /// strategy pays at most, the certificate of the accept.
     pub accepting: Vec<N>,
-    /// What the loops left behind at their forced exits over the frontier,
-    /// `2k` values, lower then upper: what the unbounded process would still
-    /// pay beyond the bound on the passes, by the probability of each path.
+    /// What the loops unbounded add to the value over the frontier, `2k`
+    /// values, lower then upper, whatever a policy takes past the bound on
+    /// the passes: see `Frontier::continued`.
     pub continued: Vec<N>,
 }
 

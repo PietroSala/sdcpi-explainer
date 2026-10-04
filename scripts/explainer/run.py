@@ -101,13 +101,16 @@ What is checked, for every sampled point with its strategy and explanation:
                               impacts, is at most the value of the point
                               plus the upper end of its `continued`; with
                               no `continued` the two values are equal.
-             The last three hold when no loop of the process sits under a
-             parallel node (Corollary "The explanation past the bound" of
-             the note). Under one the passes past the bound take time and
-             move the draws of the other branch before or after a choice:
-             the strategy may then have no continuation, or the tree may
-             depart from it, and the points where one of the three does not
-             hold are counted apart and not failed;
+             beyond-gap holds of every process: `continued` bounds, from
+             the first draw that runs a region again past the bound, the
+             whole rest of the run by the bounds of the unbounded process,
+             whatever is decided there. beyond-impact and beyond-time hold
+             when no loop of the process sits under a parallel node. Under
+             one the passes past the bound take time and move the draws of
+             the other branch before or after a choice, so the tree may
+             decide otherwise than the strategy outside those passes: the
+             points where one of the two does not hold are counted apart
+             and not failed;
   determine  `sdcpi explain F.yaml --B <the value, rounded up at the sixth
              decimal> --arith exact --time 1 --max-iter K --explain-json E
              --print-strategy 1` answers yes, and its trees classify its
@@ -912,8 +915,8 @@ def beyond_checks(res: Result, proc: Process, K, p, explanation, cap, ctx):
     cont = p.get("continued")
     if cont is None:
         if total != value:
-            departs("beyond-gap", f"the point has no continued and at {K + 1} passes the cost is {shown(total)}, "
-                    f"the point says {shown(value)}", **ctx)
+            res.fail("beyond-gap", f"the point has no continued and at {K + 1} passes the cost is {shown(total)}, "
+                     f"the point says {shown(value)}", **ctx)
         else:
             res.ok("beyond-gap")
             res.note("beyond: points with no continued, equal at one pass more")
@@ -923,8 +926,8 @@ def beyond_checks(res: Result, proc: Process, K, p, explanation, cap, ctx):
         if len(up) != len(value) or len(low) != len(value):
             res.fail("beyond-gap", f"continued has {len(low)} and {len(up)} components, the value {len(value)}", **ctx)
         elif any(total[c] > value[c] + up[c] for c in range(len(value))):
-            departs("beyond-gap", f"at {K + 1} passes the cost is {shown(total)}, past the value {shown(value)} plus the "
-                    f"upper end of continued {shown(up)}", **ctx)
+            res.fail("beyond-gap", f"at {K + 1} passes the cost is {shown(total)}, past the value {shown(value)} plus the "
+                     f"upper end of continued {shown(up)}", **ctx)
         else:
             res.ok("beyond-gap")
             if any(total[c] < value[c] + low[c] for c in range(len(value))):

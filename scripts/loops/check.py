@@ -32,7 +32,8 @@ What is checked, for every instance and every `K` in `--k` (1..4):
                  component over the frontier is the exact minimum; on an
                  instance without choices the frontier is one point, whose
                  value is the exact expected cost and whose `continued` is
-                 the expected gap of the forced exits, both exactly.
+                 the interval of the runs that leave the bound, both
+                 exactly: see below.
 
 And the gap test, on the instances without choices, for `K` in `--gap-k`
 (1..5): the value of the one point plus `continued.low`, and plus
@@ -42,12 +43,30 @@ is `U at s0` of `sdcpi bound F --max-iter inf` for every component where
 parallel nodes; the time of a process with a parallel node is the
 solution of the Markov chain of the unbounded process, solved here in
 floating point to 1e-12 and compared with a slack of 1e-8. The value grows
-with `K` and its distance to the unbounded value shrinks. The time of
-`continued.low` is zero exactly when every loop sits under a parallel
-node. The gap of a forced exit is what LOOPS.md states: `p / (1 - p)`
-passes, each worth the charge of the region in the unbounded process, the
-loops inside the region unbounded too, scaled by the probability of the
-path; the lower bound of the time is zero under a parallel node.
+with `K` and its distance to the unbounded value shrinks. In every
+component where `U` and `L` agree the two ends are equal to the unbounded
+value, exactly (`gap-exact`): a process without choices has one behaviour
+past the bound, and the interval is as wide as the two bounds of the
+unbounded process are apart, nothing in the impacts and, under a parallel
+node, the distance between the sum and the greater of the two regions in
+the time.
+
+What `continued` is. In the unbounded process the exit at the bound is a
+draw: with probability `p` the region runs again, and from that state on
+the run is no run of the truncated process, so what it still pays lies
+between the two bounds of the whole unbounded process at that state, the
+state of the forced exit with the region started again. On an instance
+without choices this is a recursion on the states: the lower end of what
+is still to pay is zero at the final state, the expected cost plus the
+lower end of the successor at a move, and at a forced exit of a loop of
+probability `p` it is `p` times the lower bound of the unbounded process
+at the again-state plus `1 - p` times the lower end of the state the exit
+leads to; the upper end the same with the upper bound. `continued` is the
+two ends at the initial state less the value. Both ends may lie on either
+side of the value in the time under a parallel node, the lower bound of
+the time there being the greater of the two regions and not their sum.
+`scripts/gap/check.py` checks the same interval on the instances with
+choices, strategy by strategy.
 
 With `--directions N` the directions of the frontier are checked too, for
 every instance and every `K` in `--k`: `N` subsets of the components to
@@ -67,7 +86,7 @@ two bounds (`dir-box`); no point is dominated by another in the directed
 sense (`dir-antichain`); the shown bounds are the recursion of LOOPS.md,
 which negation leaves as it is once the sign is turned back
 (`dir-bounds`); on an instance without choices the `continued` of the one
-point is the expected gap of the forced exits (`dir-continued`). An
+point is the interval of the runs that leave the bound (`dir-continued`). An
 oracle whose sets pass `--set-cap` vectors, or whose states pass `--cap`,
 skips the instance for that subset.
 
@@ -324,8 +343,8 @@ def expand(t: Tree, state, K, charges):
 
     `K` is the bound on the passes, `None` for the unbounded process, whose
     counts are not kept: the state then carries `None` as its counts. The
-    `charges` map a loop node to the 2k values its forced exit adds to the
-    gap, the lower then the upper bound; `None` keeps no gap.
+    `charges` mark the forced exits: the move of one carries the mark of
+    its loop node in the place of the gap; `None` marks nothing.
     """
     s, cnt = state
     k = t.k
@@ -419,9 +438,12 @@ class TooManyStates(Exception):
 def exact_pass(t: Tree, K: int, charges, cap: int):
     """The least and the greatest expected cost of every component over the
     strategies of the truncated process, from the initial state, and, when
-    the process has no choice, the expected gap of its forced exits, `2k`
-    values. Backward induction over the graph of the states, which the
-    bound on the passes makes finite and acyclic."""
+    the process has no choice, its `continued`, `2k` values, the lower end
+    then the upper one: what the unbounded run pays from the first draw
+    that leaves the bound is bounded by the two bounds of the unbounded
+    process at the state the draw leads to, and the value is taken off.
+    Backward induction over the graph of the states, which the bound on
+    the passes makes finite and acyclic."""
     k = t.k
     start = initial(t)
     expansions = {}
@@ -468,21 +490,48 @@ def exact_pass(t: Tree, K: int, charges, cap: int):
             continue
         lo = [Fraction(0)] * k
         hi = [Fraction(0)] * k
-        gap = [Fraction(0)] * (2 * k) if keep_gap else gzeros
+        # the two ends of what the unbounded run still pays from here
+        ends = [Fraction(0)] * (2 * k) if keep_gap else gzeros
         for prob, cost, step_gap, nxt in exp[1]:
-            nlo, nhi, ngap = value[nxt]
+            nlo, nhi, nends = value[nxt]
             for c in range(k):
                 lo[c] += prob * (cost[c] + nlo[c])
                 hi[c] += prob * (cost[c] + nhi[c])
-            if keep_gap:
+            if not keep_gap:
+                continue
+            if step_gap is None:
                 for c in range(2 * k):
-                    gap[c] += prob * ngap[c]
-                if step_gap is not None:
-                    for c in range(2 * k):
-                        gap[c] += prob * step_gap[c]
-        value[state] = (lo, hi, gap)
-    lo, hi, gap = value[start]
-    return lo, hi, (gap if keep_gap else None), len(seen)
+                    ends[c] += prob * (cost[c % k] + nends[c])
+            else:
+                # a forced exit: the unbounded process draws here, runs the
+                # region again with probability p and is bounded from there
+                # by its two bounds at that state, and leaves with 1 - p
+                p, again = again_state(t, state)
+                u, l = bounds(t, again[0], again[1], t.root, None)
+                for c in range(k):
+                    ends[c] += p * l[c] + (1 - p) * nends[c]
+                    ends[k + c] += p * u[c] + (1 - p) * nends[k + c]
+        value[state] = (lo, hi, ends)
+    lo, hi, ends = value[start]
+    if not keep_gap:
+        return lo, hi, None, len(seen)
+    # without choices the two optima are one value
+    gap = [ends[c] - lo[c] for c in range(k)] + [ends[k + c] - lo[c] for c in range(k)]
+    return lo, hi, gap, len(seen)
+
+
+def again_state(t: Tree, state):
+    """At a state whose clause is the draw of a loop, the probability of
+    running the region again and the state where it has been started
+    again, every count as it is."""
+    s, cnt = state
+    rank, v = rank_witness(t, s)
+    n = t.nodes[v]
+    if rank != 4 or n.kind != "loop":
+        raise ValueError(f"the node {v} is not a loop at its draw")
+    again = list(s)
+    again[n.low] = 0
+    return n.prob, (tuple(again), cnt)
 
 
 class TooManyVectors(Exception):
@@ -708,23 +757,10 @@ def bounds_at_start(t: Tree, K):
     return bounds(t, s, cnt, t.root, K)
 
 
-def continuation(t: Tree, v):
-    """What the unbounded process would still pay at a forced exit of the
-    loop `v`: the lower then the upper bound, `2k` values, `p / (1 - p)`
-    passes each worth the charge of the region from idle with its loops
-    unbounded, the time of the lower bound zero under a parallel node."""
-    g = geometric(t.nodes[v].prob, None)
-    pu, pl = pass_bounds(t, v, None)
-    low = [g * x for x in pl]
-    up = [g * x for x in pu]
-    if t.time and t.under_parallel(v):
-        low[0] = Fraction(0)
-    return low + up
-
-
 def charges_of(t: Tree):
-    """Per loop node, the `2k` values its forced exit adds to the gap."""
-    return {v: continuation(t, v) for v in t.loops}
+    """The mark of every loop node, which `expand` puts on its forced exit:
+    the exact pass reads there that the unbounded process would draw."""
+    return {v: v for v in t.loops}
 
 
 # ---------------------------------------------------------------------------
@@ -1056,7 +1092,7 @@ def _check_instance(name: str, text: str, cfg: dict, rep: Report):
                 else:
                     got = rationals(cont["low"]) + rationals(cont["up"])
                 if got != engine_gap:
-                    rep.fail("status", f"{tag}: continued {fmt(got)}, the expected gap of the forced exits {fmt(engine_gap)}")
+                    rep.fail("status", f"{tag}: continued {fmt(got)}, the interval of the runs that leave the bound {fmt(engine_gap)}")
 
     if choice_free:
         gap_test(name, text, cfg, rep, plain, timed, yaml)
@@ -1149,7 +1185,8 @@ def direction_checks(name, cfg, rep: Report, timed: Tree, yaml: Path, K: int, mi
                     f"{tag}: the engine has {len(engine)} points, the oracle {len(oracle)} (orientation of the engine); "
                     f"missing from the engine {[fmt(v) for v in missing]}, not in the oracle {[fmt(v) for v in extra]}",
                 )
-        # on an instance without choices, the gap of the one point
+        # on an instance without choices, the continued of the one point,
+        # which reads the same whatever is maximized, the sign turned back
         if choice_free and mine is not None:
             rep.count("dir-continued")
             if len(points) != 1:
@@ -1159,7 +1196,7 @@ def direction_checks(name, cfg, rep: Report, timed: Tree, yaml: Path, K: int, mi
                 cont = points[0].get("continued")
                 got = [Fraction(0)] * (2 * k) if cont is None else rationals(cont["low"]) + rationals(cont["up"])
                 if got != gap:
-                    rep.fail("dir-continued", f"{tag}: continued {fmt(got)}, the expected gap of the forced exits {fmt(gap)}")
+                    rep.fail("dir-continued", f"{tag}: continued {fmt(got)}, the interval of the runs that leave the bound {fmt(gap)}")
 
 
 def gap_test(name, text, cfg, rep: Report, plain: Tree, timed: Tree, yaml: Path):
@@ -1208,7 +1245,6 @@ def gap_test(name, text, cfg, rep: Report, plain: Tree, timed: Tree, yaml: Path)
                 rep.fail("inf-bounds", f"engine U {fmtf(b['U'])} L {fmtf(b['L'])}, mine U {fmtf(u_inf)} L {fmtf(l_inf)}")
                 break
 
-    all_under = all(timed.under_parallel(v) for v in timed.loops)
     series = []
     for K in cfg["gap_ks"]:
         out = work / f"{name}-K{K}.json"
@@ -1246,10 +1282,17 @@ def gap_test(name, text, cfg, rep: Report, plain: Tree, timed: Tree, yaml: Path)
                     f"K={K} component {c} ({timed.names[c]}): value {val[c]} + [{low[c]}, {up[c]}] = "
                     f"[{float(lo_end):.9g}, {float(up_end):.9g}] misses the unbounded value {float(v_inf[c]):.9g}",
                 )
-        # the time of the lower end is zero exactly when every loop is under a parallel node
-        rep.count("gap-time-zero")
-        if (low[0] == 0) != all_under:
-            rep.fail("gap-time-zero", f"K={K}: continued.low time {low[0]}, loops under a parallel node: {[timed.under_parallel(v) for v in timed.loops]}")
+        # where the two bounds of the unbounded process agree, every
+        # impact and the time without a parallel node, the two ends are
+        # the unbounded value
+        rep.count("gap-exact")
+        for c in range(k):
+            if exact[c] and not (val[c] + low[c] == v_inf[c] == val[c] + up[c]):
+                rep.fail(
+                    "gap-exact",
+                    f"K={K} component {c} ({timed.names[c]}): value {val[c]} + [{low[c]}, {up[c]}] is not the "
+                    f"unbounded value {v_inf[c]} at both ends",
+                )
         series.append((K, val))
     # the value grows with K and approaches the unbounded value
     if len(series) >= 2:
@@ -1295,7 +1338,11 @@ HAND = [
 
 
 def worked_example(cfg: dict) -> dict:
-    """The worked example of the task, with its stated numbers at K=3."""
+    """The worked example of the task, with its stated numbers at K=3: a
+    quarter of the runs meets the forced exit, half of them would run the
+    region again, and from there the unbounded process pays between
+    [2, 8] and [4, 20], two passes in expectation of the cheaper or of the
+    dearer child, whatever the strategy did before."""
     name, text = HAND[0]
     rep = Report(name + "-numbers", text)
     started = time.time()

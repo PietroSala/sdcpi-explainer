@@ -93,11 +93,22 @@ pub struct Engine<'t> {
 pub struct Outcome<N: Num> {
     pub decisions: Vec<u32>,
     pub impact: Vec<N>,
-    /// What the loops left behind at their forced exits along the macro
-    /// step: `2k` values, the lower and then the upper bound of the cost
-    /// the unbounded process would still pay in the passes it was denied,
-    /// unscaled by the probability of the branch, as `impact` is.
+    /// What the forced exits met along the macro step hide of the unbounded
+    /// process: `2k` values, lower then upper, unscaled by the probability
+    /// of the branch, as `impact` is. In the unbounded process the exit at
+    /// the bound is a draw, and with the probability of the loop the region
+    /// runs again: from there the run is no run of the process the search
+    /// decides, and whatever is decided, what it still pays lies between
+    /// the two bounds of the unbounded process at that state. The gap is,
+    /// summed over the forced exits of the branch, the probability of
+    /// leaving there, having stayed until then, times what was paid so far
+    /// plus the bound; minus `impact` times the probability of leaving
+    /// somewhere along the branch, which the truncated value counts whole.
     pub gap: Vec<N>,
+    /// The probability, in the unbounded process, that the run stays within
+    /// the bound along this branch: the product of the probabilities of
+    /// leaving the loop at each of its forced exits.
+    pub stay: N::Prob,
     pub prob: N::Prob,
     pub state: State,
     pub stop: Stop,
@@ -315,17 +326,32 @@ impl<'t> Engine<'t> {
     ) -> Result<Vec<Outcome<N>>, StepError> {
         let k = self.tree.k;
         let mut out: Vec<Outcome<N>> = Vec::new();
-        let mut stack: Vec<(State, Vec<u32>, Vec<N>, Vec<N>, N::Prob)> =
-            vec![(start, prefix, zeros::<N>(k), zeros::<N>(2 * k), N::prob_one())];
+        // `left`: over the forced exits met so far, the probability of
+        // leaving the bound there times what was paid plus the bound of the
+        // unbounded process, lower then upper; `stay`: the probability of
+        // not having left yet
+        let mut stack: Vec<(State, Vec<u32>, Vec<N>, Vec<N>, N::Prob, N::Prob)> =
+            vec![(start, prefix, zeros::<N>(k), zeros::<N>(2 * k), N::prob_one(), N::prob_one())];
+        // the bounds of the unbounded process at the states where a region
+        // runs again past the bound, which many branches share
+        let mut beyond: std::collections::HashMap<State, crate::bound::Bounds<N>> = std::collections::HashMap::new();
+        // the gap of a branch that ends: what was left, minus the impact
+        // times the probability of having left
+        let close = |left: Vec<N>, impact: &[N], stay: &N::Prob| -> Vec<N> {
+            let gone = N::prob_complement(stay);
+            (0..2 * k).map(|c| left[c].sub(&impact[c % k].scale(&gone))).collect()
+        };
 
-        while let Some((mut s, mut decisions, mut impact, mut gap, mut prob)) = stack.pop() {
+        while let Some((mut s, mut decisions, mut impact, mut left, mut stay, mut prob)) = stack.pop() {
             loop {
                 match self.rank_witness(&s) {
                     None => {
+                        let gap = close(left, &impact, &stay);
                         out.push(Outcome {
                             decisions,
                             impact,
                             gap,
+                            stay,
                             prob,
                             state: s,
                             stop: Stop::Final,
@@ -333,10 +359,12 @@ impl<'t> Engine<'t> {
                         break;
                     }
                     Some((1, v)) => {
+                        let gap = close(left, &impact, &stay);
                         out.push(Outcome {
                             decisions,
                             impact,
                             gap,
+                            stay,
                             prob,
                             state: s,
                             stop: Stop::Choice(v),
@@ -349,8 +377,8 @@ impl<'t> Engine<'t> {
                         // node while it runs, the one just closed included
                         // now; below the bound the region runs again with
                         // probability p, the loop is left with 1 - p; at the
-                        // bound the exit is forced, and the cost the
-                        // unbounded process would still pay goes to the gap
+                        // bound the exit is forced, and what the unbounded
+                        // process does there goes to the gap
                         let n = self.tree.node(v);
                         let bound = self.tree.max_iter.ok_or(StepError::Unbounded)?;
                         let closed = s[v as usize] as u32 + 1;
@@ -368,7 +396,8 @@ impl<'t> Engine<'t> {
                                 s_exit,
                                 d_exit,
                                 impact.clone(),
-                                gap.clone(),
+                                left.clone(),
+                                stay.clone(),
                                 N::prob_mul(&prob, &N::prob_complement(&p)),
                             ));
                             s[n.low as usize] = 0;
@@ -376,10 +405,26 @@ impl<'t> Engine<'t> {
                             decisions.push(n.low);
                             prob = N::prob_mul(&prob, &p);
                         } else {
-                            let tail = crate::bound::continuation::<N>(self.tree, v);
-                            for c in 0..2 * k {
-                                gap[c] = gap[c].add(&tail[c]);
+                            // In the unbounded process this is a draw. With
+                            // probability p the region runs again: the run
+                            // leaves the process the search decides, and
+                            // from that state on, whatever is decided, it
+                            // pays between the two bounds of the unbounded
+                            // process there. With 1 - p the loop is left,
+                            // and the run goes on as this one does.
+                            let p = N::prob_of(self.tree, v);
+                            let mut again = s.clone();
+                            again[n.low as usize] = 0;
+                            again[v as usize] = closed as i8;
+                            let b = beyond
+                                .entry(again)
+                                .or_insert_with_key(|a| crate::bound::bounds_with::<N>(self.tree, a, None));
+                            let leaving = N::prob_mul(&stay, &p);
+                            for c in 0..k {
+                                left[c] = left[c].add(&impact[c].add(&b.lower[c]).scale(&leaving));
+                                left[k + c] = left[k + c].add(&impact[c].add(&b.upper[c]).scale(&leaving));
                             }
+                            stay = N::prob_mul(&stay, &N::prob_complement(&p));
                             s[n.low as usize] = IDLE;
                             s[v as usize] = DONE;
                         }
@@ -398,7 +443,8 @@ impl<'t> Engine<'t> {
                             s_high,
                             d_high,
                             impact.clone(),
-                            gap.clone(),
+                            left.clone(),
+                            stay.clone(),
                             N::prob_mul(&prob, &N::prob_complement(&p)),
                         ));
 

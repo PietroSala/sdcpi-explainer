@@ -81,38 +81,6 @@ fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>, cache: &mut Vec<Opti
     st
 }
 
-/// What the unbounded process would still pay at a forced exit of the loop
-/// `v`: `2k` values, the lower bounds then the upper ones, of the passes
-/// the loop is denied, `p / (1 - p)` passes each worth a charge of the
-/// region in the unbounded process, the loops inside the region unbounded
-/// too, since the passes denied run there. The lower bound of the time is
-/// zero under a parallel node, the passes of a branch not lengthening the
-/// whole run for certain.
-pub fn continuation<N: Num>(tree: &Tree, v: u32) -> Vec<N> {
-    let k = tree.k;
-    let p = N::prob_of(tree, v);
-    let g = N::geometric(&p, None);
-    let mut cache: Vec<Option<Vec<N>>> = vec![None; tree.nodes.len()];
-    let one = pass::<N>(tree, v, None, &mut cache);
-    let mut out: Vec<N> = Vec::with_capacity(2 * k);
-    for c in 0..k {
-        out.push(one[k + c].scale(&g));
-    }
-    for c in 0..k {
-        out.push(one[c].scale(&g));
-    }
-    if tree.time && tree.under_parallel(v) {
-        // with the time maximized the component is minus the time, and the
-        // zero sits on the upper bound of the gap
-        if tree.maximized[0] {
-            out[k] = N::zero();
-        } else {
-            out[0] = N::zero();
-        }
-    }
-    out
-}
-
 /// Pushes the `2k` values `U_s(v)` then `L_s(v)` on `st`.
 ///
 /// The scratch stack keeps the recursion free of allocation: a combinator reads
