@@ -13,8 +13,10 @@ five rules read by rank and witness, the two clauses of a loop, the counts,
 and checks the statements on random processes and random deterministic
 policies, every history of every policy enumerated:
 
-  trail      two histories neither a prefix of the other part at a decision
-             or at a draw, at the same node, with different entries;
+  trail      two histories of the whole decision process, every action
+             taken at every choice, neither a prefix of the other, part at
+             a decision or at a draw, at the same node, with different
+             entries; and two histories of one policy part at a draw;
   restart    a node that is running at a position and is started again at a
              later one has, in between, a draw at a loop above it that runs
              its region again; without loops no node starts twice;
@@ -23,14 +25,22 @@ policies, every history of every policy enumerated:
   decides    under a deterministic policy, for every choice node, the
              histories at which the choice is due have pairwise distinct
              draws, so the decision is a function of the draws;
-  assignment without loops every nature node is drawn at most once along a
-             history, and the histories at which a choice is due have
+  assignment without loops every nature node is drawn at most once along
+             every history, and the histories at which a choice is due have
              pairwise distinct partial assignments of the nature nodes;
+  reading    two sequences of draws that one policy meets at the same choice
+             are told apart by the policy the proof builds, changed at one
+             history, at which both are still met;
   recovered  the policy rebuilt from its decision functions alone, read on
-             the draws, walks the same histories and has the same value.
+             the draws, walks the same histories and has the same value, in
+             the impact and in the time.
 
-No tool is called: the semantics here is independent of the engine. The
-exit code is 0 exactly when nothing failed.
+The processes hold loops inside loops, and the bound on the passes takes
+the values of --k and, on a part of the processes with loops, no bound at
+all, the histories being then cut at a length and the statements that speak
+of whole runs left out. An instance whose histories pass --cap is skipped
+and counted apart. No tool is called: the semantics here is independent of
+the engine. The exit code is 0 exactly when nothing failed.
 """
 
 import argparse
@@ -41,6 +51,9 @@ from fractions import Fraction as F
 TASK, SEQ, PAR, CHOICE, NATURE, LOOP = "task", "seq", "par", "choice", "nature", "loop"
 IDLE, DONE = -1, -2
 OUT = "out"
+# the time is carried beside the impact in one rational, on a scale no sum of
+# impacts reaches, so that one number compares both
+TIME = F(10) ** 9
 
 
 class Tree:
@@ -124,7 +137,7 @@ def random_tree(rng, tasks, loops_allowed):
             lo, hi = gen(left), gen(n - left)
             prob = F(rng.randint(1, 9), 10) if kind == NATURE else None
             node = b.add(kind, lo, hi, prob=prob)
-        if loops_allowed and rng.random() < 0.22:
+        while loops_allowed and rng.random() < 0.22:
             node = b.add(LOOP, node, prob=F(rng.randint(2, 7), 10))
         return node
     return b.finish(gen(tasks))
@@ -227,7 +240,7 @@ def moves(t, s, K):
             return r, v, [("tau", t.prob[v], state(p_again, cnt), F(0)),
                           ("tau", 1 - t.prob[v], state(p_exit, c_exit), F(0))]
         return r, v, [("tau", F(1), state(p_exit, c_exit), F(0))]
-    # the fast forward
+    # the fast forward: the impact of the closers, and the advance as the time
     running = [u for u in t.tasks if ph[u] >= 0]
     step = min(t.dur[u] - ph[u] for u in running)
     closers = [u for u in running if t.dur[u] - ph[u] == step]
@@ -238,7 +251,7 @@ def moves(t, s, K):
             p2[u] = DONE; c2[u] += 1; cost += t.impact[u]
         elif ph[u] >= 0:
             p2[u] = ph[u] + step
-    return r, None, [("tau", F(1), state(p2, c2), cost)]
+    return r, None, [("tau", F(1), state(p2, c2), cost + TIME * step)]
 
 
 def entry(t, s, v, nxt):
@@ -254,12 +267,14 @@ class Failure(Exception):
     pass
 
 
-def enumerate_policy(t, K, rng, cap):
+def enumerate_policy(t, K, rng, cap, policy=None, max_len=None):
     """Every history of one random deterministic policy, from the initial
     state. The policy is drawn lazily, an action per history at which a
-    choice is due. Returns the list of the histories as records."""
+    choice is due, on top of the table given. With max_len the histories are
+    cut at that length, for the process with no bound on the passes.
+    Returns the list of the histories as records, and the table."""
     records = []
-    policy = {}
+    policy = dict(policy or {})
 
     def walk(states, trail, kinds, cost, prob):
         if len(records) > cap:
@@ -267,9 +282,12 @@ def enumerate_policy(t, K, rng, cap):
         s = states[-1]
         r, v, mv = moves(t, s, K)
         rec = {"states": tuple(states), "trail": tuple(trail), "kinds": tuple(kinds), "rank": r, "witness": v,
-               "prob": prob, "cost": cost}
+               "prob": prob, "cost": cost, "cut": False}
         records.append(rec)
         if r is None:
+            return
+        if max_len is not None and len(states) > max_len:
+            rec["cut"] = True
             return
         if r == 1:
             key = tuple(states)
@@ -289,6 +307,23 @@ def enumerate_policy(t, K, rng, cap):
     return records, policy
 
 
+def enumerate_all(t, K, cap, max_len=None):
+    """Every maximal history of the decision process itself, every action
+    taken at every choice and every draw followed: the states of each."""
+    out = []
+
+    def walk(states):
+        if len(out) > cap:
+            raise OverflowError
+        r, v, mv = moves(t, states[-1], K)
+        if r is None or (max_len is not None and len(states) > max_len):
+            out.append(tuple(states)); return
+        for (_, _, nxt, _) in mv:
+            walk(states + [nxt])
+    walk([initial(t)])
+    return out
+
+
 def is_prefix(a, b):
     return len(a) <= len(b) and b[:len(a)] == a
 
@@ -297,12 +332,13 @@ def draws(rec):
     return tuple(e for e, k in zip(rec["trail"], rec["kinds"]) if k == "drw")
 
 
-def check_instance(t, K, rng, counts, fails, cap, label):
+def check_instance(t, K, rng, counts, fails, cap, label, max_len=None):
     try:
-        records, policy = enumerate_policy(t, K, rng, cap)
+        records, policy = enumerate_policy(t, K, rng, cap, max_len=max_len)
     except (OverflowError, RecursionError):
         counts["skipped"] = counts.get("skipped", 0) + 1
         return
+    whole = max_len is None        # the runs are whole: the statements on them apply
 
     def fail(name, detail):
         fails.append((name, label, detail))
@@ -311,20 +347,49 @@ def check_instance(t, K, rng, counts, fails, cap, label):
         counts[name] = counts.get(name, 0) + n
 
     # the measure of the maximal histories is one
-    total = sum(r["prob"] for r in records if r["rank"] is None)
-    count("measure")
-    if total != 1:
-        fail("measure", f"the final histories have probability {total}")
+    if whole:
+        total = sum(r["prob"] for r in records if r["rank"] is None)
+        count("measure")
+        if total != 1:
+            fail("measure", f"the final histories have probability {total}")
 
-    # trail: two histories neither a prefix of the other part at a decision or a draw
-    finals = [r for r in records if r["rank"] is None]
+    # trail, on the whole process: two histories part at a decision or at a
+    # draw, at the same node, with different entries
+    try:
+        everything = enumerate_all(t, K, 400, max_len=max_len)
+    except (OverflowError, RecursionError):
+        everything = []
+    pairs = [(a, b) for a in range(len(everything)) for b in range(a + 1, len(everything))]
+    if len(pairs) > 1500:
+        pairs = rng.sample(pairs, 1500)
+    for a, b in pairs:
+        ha, hb = everything[a], everything[b]
+        g = 0
+        while g < min(len(ha), len(hb)) and ha[g] == hb[g]:
+            g += 1
+        if g == min(len(ha), len(hb)):
+            continue                      # one a prefix of the other, a cut history
+        s = ha[g - 1]
+        r, v, mv = moves(t, s, K)
+        count("trail")
+        if not (r == 1 or (r == 4 and len(mv) == 2)):
+            fail("trail", f"two histories of the process part at rank {r} with {len(mv)} successors")
+            continue
+        ea, eb = entry(t, s, v, ha[g]), entry(t, s, v, hb[g])
+        if ea[0] != eb[0] or ea[1] == eb[1]:
+            fail("trail", f"entries {ea} and {eb} at the parting")
+
+    # trail, on one policy: its histories part at a draw
+    finals = [r for r in records if r["rank"] is None or r["cut"]]
     for a in range(len(finals)):
         for b in range(a + 1, len(finals)):
             ha, hb = finals[a]["states"], finals[b]["states"]
             g = 0
-            while ha[g] == hb[g]:
+            while g < min(len(ha), len(hb)) and ha[g] == hb[g]:
                 g += 1
             # g is the first position where the states differ: the step at g - 1 parts them
+            if g >= min(len(ha), len(hb)):
+                continue
             s = ha[g - 1]
             r, v, mv = moves(t, s, K)
             count("trail")
@@ -384,6 +449,39 @@ def check_instance(t, K, rng, counts, fails, cap, label):
                 if not is_prefix(a["states"], b["states"]):
                     fail("prefix", f"draws {x} a prefix of {y}, histories not comparable")
 
+    # without loops every nature node is drawn at most once along every history
+    if not t.loops:
+        for rec in records:
+            nodes = [e[0] for e in draws(rec)]
+            count("assignment")
+            if len(set(nodes)) != len(nodes):
+                fail("assignment", f"a nature node drawn twice without loops: {draws(rec)}")
+
+    # reading: two sequences of draws one policy meets at a choice are told
+    # apart by the policy of the proof, changed at one history
+    for v in t.choices:
+        due = [r for r in records if r["rank"] == 1 and r["witness"] == v and r["states"] in policy]
+        if len(due) < 2:
+            continue
+        ra, rb = rng.sample(due, 2)
+        if is_prefix(rb["states"], ra["states"]):
+            ra, rb = rb, ra                        # rb is not a proper prefix of ra
+        table = dict(policy)
+        if policy[ra["states"]] == policy[rb["states"]]:
+            table[rb["states"]] = [c for c in t.children(v) if c != policy[rb["states"]]][0]
+        try:
+            rec2, pol2 = enumerate_policy(t, K, rng, cap, policy=table, max_len=max_len)
+        except (OverflowError, RecursionError):
+            continue
+        count("reading")
+        met = {r["states"]: r for r in rec2 if r["rank"] == 1 and r["witness"] == v}
+        if ra["states"] not in met or rb["states"] not in met:
+            fail("reading", f"the changed policy no longer meets choice {v} at both histories")
+        elif pol2[ra["states"]] == pol2[rb["states"]]:
+            fail("reading", f"the changed policy decides alike after {draws(ra)} and {draws(rb)}")
+        elif draws(met[ra["states"]]) == draws(met[rb["states"]]):
+            fail("reading", f"two histories at choice {v} with the same draws")
+
     # decides: at a choice node, the histories at which it is due have distinct draws
     for v in t.choices:
         due = [r for r in records if r["rank"] == 1 and r["witness"] == v]
@@ -409,6 +507,8 @@ def check_instance(t, K, rng, counts, fails, cap, label):
                 seen_a[key] = rec
 
     # recovered: the decision functions alone rebuild the policy
+    if not whole:
+        return
     f = {}
     for rec in records:
         if rec["rank"] == 1:
@@ -436,10 +536,10 @@ def check_instance(t, K, rng, counts, fails, cap, label):
     try:
         acc = []
         replay([initial(t)], [], F(0), F(1), acc)
-        mine = sorted((r["states"], r["prob"], r["cost"]) for r in finals)
+        mine = sorted((r["states"], r["prob"], r["cost"]) for r in records if r["rank"] is None)
         if sorted(acc) != mine:
             fail("recovered", "the policy rebuilt from its decision functions walks other histories")
-        elif sum(p * c for _, p, c in acc) != sum(r["prob"] * r["cost"] for r in finals):
+        elif sum(p * c for _, p, c in acc) != sum(r["prob"] * r["cost"] for r in records if r["rank"] is None):
             fail("recovered", "the rebuilt policy has another value")
     except Failure as e:
         fail("recovered", str(e))
@@ -452,6 +552,7 @@ def main():
     ap.add_argument("--policies", type=int, default=4)
     ap.add_argument("--k", default="1,2,3")
     ap.add_argument("--cap", type=int, default=6000, help="histories of one policy past which an instance is skipped")
+    ap.add_argument("--cut", type=int, default=40, help="length at which a history of the unbounded process is cut")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     sys.setrecursionlimit(20000)
@@ -459,6 +560,7 @@ def main():
     ks = [int(x) for x in args.k.split(",")]
     counts, fails = {}, []
     with_loops = without = 0
+    unbounded = [0]
     for n in range(args.count):
         loops_allowed = n % 2 == 0
         t = random_tree(rng, rng.randint(2, 6), loops_allowed)
@@ -469,10 +571,19 @@ def main():
         for K in (ks if t.loops else [1]):
             for p in range(args.policies):
                 check_instance(t, K, rng, counts, fails, args.cap, f"#{n} K={K} policy {p}: {t.text()}")
+        if t.loops and n % 4 == 0:
+            # no bound on the passes: the histories cut at a length
+            for p in range(2):
+                check_instance(t, None, rng, counts, fails, args.cap, f"#{n} K=inf policy {p}: {t.text()}", max_len=args.cut)
+                unbounded[0] += 1
         if args.verbose:
             print(n, t.text())
-    print(f"{args.count} processes, {with_loops} with loops and {without} without, {args.policies} policies each, K in {ks}")
+    skipped = counts.pop("skipped", 0)
+    nested = "loops inside loops among them"
+    print(f"{args.count} processes, {with_loops} with loops ({nested}) and {without} without, {args.policies} policies each, K in {ks}, "
+          f"and {unbounded[0]} runs with no bound, cut at length {args.cut}")
     print("checks made:  ", ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    print(f"skipped for size: {skipped} policy runs")
     for name, label, detail in fails[:12]:
         print(f"  FAIL [{name}] {detail}\n       {label}")
     print(f"failures: {len(fails)}")
