@@ -1607,7 +1607,7 @@ function explainers(e) {
                 caption: alone ? `the time alone: ${countText(s)}`
                        : `a minimal set of impacts${withTime(s) ? ' with the time' : ''}, ${setLabel(s.components)}: ${countText(s)}` });
   }
-  if (!first.sets_complete) notes.push(`One minimal set${first.time === 'in' ? ' with the time' : ''} is shown; the others were not looked for, the components being more than twelve.`);
+  if (!first.sets_complete) notes.push(`One minimal set${first.time === 'in' ? ' with the time' : ''} was found${sets.length ? '' : ', the one an option above reads'}; the others were not looked for, the components being more than twelve.`);
   return { opts, notes };
 }
 // The explainers of a choice: its options in a row, the one chosen drawn

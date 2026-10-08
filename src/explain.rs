@@ -821,8 +821,11 @@ pub fn render_text(tree: &Tree, explanations: &[Explanation], name: &dyn Fn(u32)
             impact_text_node(tree, &s.root, 2, name, &mut out);
         }
         if !first.sets_complete {
+            // the one set found may be the one a tree above reads, and then
+            // it is listed nowhere else
             out.push_str(&format!(
-                "  by the fewest impacts: one minimal set found, the others not looked for past {SETS_EXHAUSTIVE} components\n"
+                "  by the fewest impacts: one minimal set found{}, the others not looked for past {SETS_EXHAUSTIVE} components\n",
+                if listed.is_empty() { ", read by a tree above" } else { "" }
             ));
         }
     }
