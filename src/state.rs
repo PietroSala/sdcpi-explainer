@@ -474,7 +474,12 @@ impl<'t> Engine<'t> {
     /// counted from 1, and for the draw of a loop, last, the pass of its own
     /// region that the draw follows. The exit a loop is forced to at the
     /// bound is no draw: it writes nothing in the trail and has no entry.
-    pub fn replay(&self, dh: &[u32]) -> Result<(Vec<Entry>, Vec<Vec<u32>>, Option<u32>), String> {
+    ///
+    /// Last, the cost paid along the trail, `k` values: what the fast
+    /// forwards paid up to the state the trail ends at, the time in front
+    /// when it is in. It is what an explanation reads when it reads the
+    /// impacts in place of the draws.
+    pub fn replay<N: Num>(&self, dh: &[u32]) -> Result<(Vec<Entry>, Vec<Vec<u32>>, Option<u32>, Vec<N>), String> {
         let t = self.tree;
         let above = t.loops_above();
         // the pass of every loop above `v` that is running: the count of a
@@ -484,7 +489,7 @@ impl<'t> Engine<'t> {
         };
         let mut passes: Vec<Vec<u32>> = Vec::with_capacity(dh.len());
         let mut s = self.initial_state();
-        let mut scratch = vec![0.0f64; t.k];
+        let mut cost: Vec<N> = zeros::<N>(t.k);
         let mut entries: Vec<Entry> = Vec::with_capacity(dh.len());
         let mut at = 0usize;
         // every turn of the loop applies one clause; a run of the process is
@@ -496,11 +501,11 @@ impl<'t> Engine<'t> {
                     if at != dh.len() {
                         return Err(format!("the trail goes on past the end of the run, at entry {at}"));
                     }
-                    return Ok((entries, passes, None));
+                    return Ok((entries, passes, None, cost));
                 }
                 Some((1, v)) => {
                     if at == dh.len() {
-                        return Ok((entries, passes, Some(v)));
+                        return Ok((entries, passes, Some(v), cost));
                     }
                     let n = t.node(v);
                     let a = dh[at];
@@ -553,7 +558,7 @@ impl<'t> Engine<'t> {
                 }
                 Some((2, v)) => self.down(&mut s, v),
                 Some((3, v)) => self.up(&mut s, v),
-                Some((5, _)) => self.fast_forward(&mut s, &mut scratch),
+                Some((5, _)) => self.fast_forward(&mut s, &mut cost),
                 Some((r, _)) => return Err(format!("rank {r} is not a clause")),
             }
         }
