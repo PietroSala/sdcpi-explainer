@@ -118,7 +118,8 @@ What is checked, for every sampled point with its strategy and explanation:
   page       a server of the suite, `sdcpi serve --port P --saved
              WORK/store.json`: `POST /api/explain` with the process, time=1,
              max_iter=K and the decisions of the point gives the trees of
-             the command line, up to the node objects;
+             the command line, up to the node objects, the readings of the
+             impacts included;
   page-malformed
              decisions with no `>`, an identifier out of range, an action
              that is no child of the choice the trail ends at, a trail that
@@ -129,7 +130,61 @@ What is checked, for every sampled point with its strategy and explanation:
              dropped or added: the simulator says whether they still are
              decisions at choices, the server must answer an error exactly
              when they are not, and otherwise trees that classify them;
-  page-alive the server still answers after every malformed request.
+  page-alive the server still answers after every malformed request;
+  impacts-*  the readings of the impacts of every explained choice. The
+             cost of a history at the state the choice is due at is what
+             the fast forwards paid along it on the simulator, the time
+             elapsed as the component 0 and then the impacts of the tasks
+             closed. With the time in the cost (`--time 1`, always here) a
+             choice has two readings, `in` on every component and `out` on
+             the impacts alone, the time left out; a test on the impacts
+             states "the component j is at most v" and holds of a history
+             exactly when its cost on j is at most v, in rationals. A
+             reading is separable when no two histories pay the same on
+             its components and are decided differently. Six checks:
+               impacts-shape      the readings are two, in that order, on
+                                  those components; the names are those
+                                  of the instance, the time first; every
+                                  tree carries its tests and depth, reads
+                                  the components it says, within the
+                                  reading, never the time in `out`; every
+                                  test names its component, says whether
+                                  it is the time, relates "at most" (no
+                                  component is maximized here) to an exact
+                                  rational and its approximation, and both
+                                  its branches are reached by a history; a
+                                  reading that is not separable has a
+                                  clash, no minimum and no set;
+               impacts-separable  the reading is separable exactly when
+                                  the simulator finds no two such
+                                  histories, and the clash of one that is
+                                  not is two decisions of the strategy at
+                                  that choice that pay the same and take
+                                  different children;
+               impacts-classify   every tree of every reading, the minimum
+                                  and the trees of the sets, comes to the
+                                  child the strategy takes on the cost of
+                                  every history;
+               impacts-sets       the sets are the inclusion-minimal
+                                  subsets of the components of the reading
+                                  on which the histories are separable,
+                                  found here over every subset, by size
+                                  then by their indices, each read in full
+                                  by its tree; the sets of `out` are those
+                                  of `in` that leave out the time;
+               impacts-minimal    for a tree claimed minimal with at most
+                                  `--min-rows` histories distinct on its
+                                  components and `--min-statements` cuts,
+                                  the exhaustive search of `minimal` over
+                                  the cuts, every component of the tree at
+                                  every value a history pays on it but the
+                                  greatest, gives its tests and depth: the
+                                  minimum on the components of the
+                                  reading, a set tree on its set;
+               impacts-minimum    the minimum has no more tests than any
+                                  set tree, as many when it reads exactly
+                                  a minimal set, and reads a superset of
+                                  one.
 
 The server is started on `--port`, refused when something already answers
 there, and killed at the end. Every file lands under `--work`, by default a
@@ -260,6 +315,7 @@ class Process:
                 raise ValueError(f"node {i + 1} is not the same on the simulator")
         self.k = ct.k + 1                       # the time in front
         self.n = ct.n
+        self.names = ["time"] + list(ct.names)  # the components as the tool names them
         self.impact = [None] * ct.n
         for i in range(ct.n):
             n = ct.nodes[i + 1]
@@ -304,19 +360,23 @@ def draw_key(t, s, v):
 
 class Replayer:
     """The histories the trails write, replayed on the simulator and typed
-    by the clauses. The state reached after every prefix is kept, the
-    decisions of a strategy sharing their prefixes. The draws of a history
-    are a map from (node, passes) to what the draw gave, the node an
-    identifier of the tool, the passes those of `pass_index` of the
-    simulator at the state the draw is taken at."""
+    by the clauses. The state reached after every prefix is kept, with the
+    draws so far and the cost paid so far, the decisions of a strategy
+    sharing their prefixes. The draws of a history are a map from (node,
+    passes) to what the draw gave, the node an identifier of the tool, the
+    passes those of `pass_index` of the simulator at the state the draw is
+    taken at. The cost is what the fast forwards paid, `Process.advance`
+    at every rank-5 move: the time elapsed first, then the impacts of the
+    tasks closed, a list of `proc.k` rationals."""
 
     def __init__(self, proc: Process, K: int):
         self.p, self.t, self.K = proc, proc.t, K
-        self.memo = {(): (cd.initial(self.t), {})}
+        self.memo = {(): (cd.initial(self.t), {}, [F(0)] * proc.k)}
 
-    def consume(self, s, hist, x):
-        """Walks from `s` to the first decision or draw and gives it the
-        entry `x`, an identifier of the tool."""
+    def consume(self, s, hist, cost, x):
+        """Walks from `s` to the first decision or draw, paying the fast
+        forwards on the way, and gives it the entry `x`, an identifier of
+        the tool."""
         t = self.t
         for _ in range(100000):
             r, v, mv = cd.moves(t, s, self.K)
@@ -328,7 +388,7 @@ class Replayer:
             if r == 1:
                 for (a, _, nxt, _) in mv:
                     if a == y:
-                        return nxt, hist
+                        return nxt, hist, cost
                 raise BadTrail(f"{x} is no child of the choice {v + 1}")
             if r == 4 and len(mv) == 2:
                 if t.kind[v] == cd.NATURE:
@@ -347,8 +407,11 @@ class Replayer:
                     raise SameName(f"two draws of one history at the node {key[0]} in the passes {list(key[1])}")
                 hist = dict(hist)
                 hist[key] = value
-                return nxt, hist
-            s = mv[0][2]
+                return nxt, hist, cost
+            nxt = mv[0][2]
+            if r == 5:
+                cost = [a + b for a, b in zip(cost, self.p.advance(s, nxt))]
+            s = nxt
         raise BadTrail("the replay does not end")
 
     def after(self, trail):
@@ -356,27 +419,31 @@ class Replayer:
         g = len(trail)
         while trail[:g] not in self.memo:
             g -= 1
-        s, hist = self.memo[trail[:g]]
+        s, hist, cost = self.memo[trail[:g]]
         while g < len(trail):
-            s, hist = self.consume(s, hist, trail[g])
+            s, hist, cost = self.consume(s, hist, cost, trail[g])
             g += 1
-            self.memo[trail[:g]] = (s, hist)
-        return s, hist
+            self.memo[trail[:g]] = (s, hist, cost)
+        return s, hist, cost
 
     def due(self, trail):
-        """The choice due after the trail, an identifier of the tool, and
-        the draws of the trail by their passes."""
-        s, hist = self.after(trail)
+        """The choice due after the trail, an identifier of the tool, the
+        draws of the trail by their passes, and the cost paid up to the
+        state the choice is due at."""
+        s, hist, cost = self.after(trail)
         t = self.t
         for _ in range(100000):
             r, v, mv = cd.moves(t, s, self.K)
             if r is None:
                 raise BadTrail("the history ends the run: no choice is due")
             if r == 1:
-                return v + 1, hist
+                return v + 1, hist, cost
             if r == 4 and len(mv) == 2:
                 raise BadTrail(f"the trail ends at the draw of the node {v + 1}, not at a choice")
-            s = mv[0][2]
+            nxt = mv[0][2]
+            if r == 5:
+                cost = [a + b for a, b in zip(cost, self.p.advance(s, nxt))]
+            s = nxt
         raise BadTrail("the replay does not end")
 
 
@@ -488,6 +555,359 @@ def fewest(truth, labels):
 
 
 # ---------------------------------------------------------------------------
+# the trees on the impacts
+# ---------------------------------------------------------------------------
+
+READING_FIELDS = {"time", "available", "separable", "clash", "minimum", "sets", "sets_complete"}
+IMPACT_TREE_FIELDS = {"components", "tests", "depth", "minimal", "tree"}
+SETS_EXHAUSTIVE = 12   # the most components a reading lists every minimal set on
+
+
+def is_node(x):
+    """A node object of the JSON: an identifier with its name."""
+    return (isinstance(x, dict) and "id" in x and set(x) <= {"id", "name", "label", "task"}
+            and isinstance(x["id"], int) and not isinstance(x["id"], bool))
+
+
+def rational(text):
+    """The exact value a test on the impacts compares with, "a/b" or a
+    decimal."""
+    if not isinstance(text, str):
+        raise ValueError(f"the value {text!r} is no string")
+    return F(text)
+
+
+def impact_holds(node, cost):
+    """Whether a test on the impacts holds of a cost vector: the component
+    is at most the value, or at least it on a maximized component."""
+    v = rational(node["value"])
+    x = cost[node["component"]]
+    return x >= v if node["relation"] == "at least" else x <= v
+
+
+def impact_evaluate(node, cost):
+    """The leaf a tree on the impacts comes to on a cost vector."""
+    try:
+        while "take" not in node:
+            node = node["yes"] if impact_holds(node, cost) else node["no"]
+        return node["take"]["id"]
+    except (KeyError, TypeError, IndexError, ValueError, ZeroDivisionError) as err:
+        raise NoBranch(f"a test on the impacts does not read: {type(err).__name__} {err}")
+
+
+def projection(cost, comps):
+    """The cost on these components."""
+    return tuple(cost[c] for c in comps)
+
+
+def clash_on(rows, comps):
+    """Two rows that pay the same on these components and take different
+    children, or None when the decision is a function of the cost on
+    them."""
+    seen = {}
+    for row in rows:
+        other = seen.setdefault(projection(row[3], comps), row)
+        if other[1] != row[1]:
+            return other, row
+    return None
+
+
+def minimal_sets_on(rows, available):
+    """The inclusion-minimal subsets of the available components on which
+    the decision is a function of the cost, by size and then by their
+    components, every subset tried."""
+    avail = list(available)
+    subsets = [tuple(c for i, c in enumerate(avail) if mask >> i & 1) for mask in range(1 << len(avail))]
+    good = [s for s in subsets if clash_on(rows, s) is None]
+    minimal = [s for s in good if not any(t != s and set(t) <= set(s) for t in good)]
+    return sorted(minimal, key=lambda s: (len(s), s))
+
+
+def distinct_rows(rows, comps):
+    """One row per distinct cost on these components, the first met, as
+    the tool keeps them."""
+    seen = {}
+    for row in rows:
+        seen.setdefault(projection(row[3], comps), row)
+    return list(seen.values())
+
+
+def cut_statements(rows, comps):
+    """What a test on the impacts may state: a component of `comps` is at
+    most one of the values the rows pay on it, every value but the
+    greatest."""
+    out = []
+    for c in comps:
+        vals = sorted({row[3][c] for row in rows})
+        out.extend((c, x) for x in vals[:-1])
+    return out
+
+
+def shown_cost(cost):
+    return [str(x) for x in cost]
+
+
+def check_impact_tree(proc, v, imp, r, label, t, rows, problems):
+    """One tree on the impacts of a reading: its fields, its tests, the
+    branches reached."""
+    tag = f"choice {v}, the reading {r['time']}, the {label} tree"
+    avail = r["available"]
+    if not isinstance(t, dict) or set(t) != IMPACT_TREE_FIELDS:
+        problems.append(f"{tag} has the fields {sorted(t) if isinstance(t, dict) else repr(t)}")
+        return
+    if not isinstance(t["minimal"], bool):
+        problems.append(f"{tag}: minimal is {t['minimal']!r}")
+    tests, depth = stats(t["tree"])
+    if (tests, depth) != (t["tests"], t["depth"]):
+        problems.append(f"{tag}: tests {t['tests']} depth {t['depth']} written, {tests} and {depth} in the tree")
+    read = sorted({n.get("component") for n in tests_of(t["tree"], [])}, key=repr)
+    if t["components"] != read:
+        problems.append(f"{tag}: components {t['components']} written, the tests read {read}")
+
+    def walk(node, here):
+        if "take" in node:
+            if not is_node(node["take"]) or node["take"]["id"] not in proc.children(v):
+                problems.append(f"{tag}: a leaf takes {strip(node['take'])}, no child of the choice")
+            return
+        c = node.get("component")
+        if not isinstance(c, int) or isinstance(c, bool) or c not in avail:
+            problems.append(f"{tag}: a test reads the component {c!r}, not among the available {avail}")
+            return
+        where = f"{tag}: the test on the component {c}"
+        if r["time"] == "out" and c == 0:
+            problems.append(f"{where} reads the time, which the reading leaves out")
+        if node.get("name") != imp["names"][c]:
+            problems.append(f"{where} is named {node.get('name')!r}, the component {imp['names'][c]!r}")
+        if node.get("time") is not (imp["time"] is True and c == 0):
+            problems.append(f"{where} says time {node.get('time')!r}")
+        if node.get("relation") != "at most":
+            problems.append(f"{where} has the relation {node.get('relation')!r}, no component is maximized")
+        try:
+            value = rational(node.get("value"))
+        except (ValueError, ZeroDivisionError) as err:
+            problems.append(f"{where}: the value does not read: {err}")
+            return
+        approx = node.get("approx")
+        if (isinstance(approx, bool) or not isinstance(approx, (int, float))
+                or abs(approx - float(value)) > 1e-9 * max(1.0, abs(float(value)))):
+            problems.append(f"{where} at most {node['value']} has the approx {approx!r}")
+        for side in ("yes", "no"):
+            if not isinstance(node.get(side), dict):
+                problems.append(f"{where} at most {node['value']} has no branch {side}")
+                return
+        yes = [row for row in here if row[3][c] <= value]
+        no = [row for row in here if row[3][c] > value]
+        if here and not yes:
+            problems.append(f"{where} at most {node['value']} holds of no history that reaches it")
+        if here and not no:
+            problems.append(f"{where} at most {node['value']} holds of every history that reaches it")
+        walk(node["yes"], yes)
+        walk(node["no"], no)
+    walk(t["tree"], rows)
+
+
+def check_impacts_shape(proc, e, rows, problems):
+    """The readings of the impacts of one choice, as the JSON writes them.
+    Returns the readings when they read, None otherwise."""
+    v = e["choice"]["id"]
+    where = f"choice {v}"
+    imp = e.get("impacts")
+    if not isinstance(imp, dict):
+        problems.append(f"{where}: impacts is {type(imp).__name__}, no object")
+        return None
+    if set(imp) != {"time", "names", "readings"}:
+        problems.append(f"{where}: impacts has the fields {sorted(imp)}")
+    if imp.get("time") is not True:
+        problems.append(f"{where}: impacts.time is {imp.get('time')!r}, the run has the time in")
+    if imp.get("names") != proc.names:
+        problems.append(f"{where}: the names {imp.get('names')} are not {proc.names}")
+    k = proc.k
+    want = [("in", list(range(k))), ("out", list(range(1, k)))] if imp.get("time") is True else [("none", list(range(k)))]
+    readings = imp.get("readings")
+    if not isinstance(readings, list) or not all(isinstance(r, dict) for r in readings):
+        problems.append(f"{where}: readings is {readings!r}")
+        return None
+    heads = [(r.get("time"), r.get("available")) for r in readings]
+    if heads != want:
+        problems.append(f"{where}: the readings are {heads}, not {want}")
+        return None
+    for r in readings:
+        tag = f"{where}, the reading {r['time']}"
+        avail = r["available"]
+        if set(r) != READING_FIELDS:
+            problems.append(f"{tag} has the fields {sorted(r)}")
+        if not isinstance(r.get("separable"), bool):
+            problems.append(f"{tag}: separable is {r.get('separable')!r}")
+            continue
+        if r.get("sets_complete") is not True and len(avail) <= SETS_EXHAUSTIVE:
+            problems.append(f"{tag}: sets_complete is {r.get('sets_complete')!r} on {len(avail)} components")
+        if not isinstance(r.get("sets"), list):
+            problems.append(f"{tag}: sets is {r.get('sets')!r}")
+            continue
+        if r["separable"]:
+            if r.get("clash") is not None:
+                problems.append(f"{tag} is separable and has the clash {strip(r['clash'])}")
+            if not isinstance(r.get("minimum"), dict):
+                problems.append(f"{tag} is separable and has the minimum {r.get('minimum')!r}")
+            trees = [("minimum", r["minimum"])] if isinstance(r.get("minimum"), dict) else []
+            trees += [(f"set {i + 1}", t) for i, t in enumerate(r["sets"])]
+            for label, t in trees:
+                check_impact_tree(proc, v, imp, r, label, t, rows, problems)
+        else:
+            if r.get("minimum") is not None or r["sets"]:
+                problems.append(f"{tag} is not separable and carries a minimum or sets")
+            c = r.get("clash")
+            if not isinstance(c, dict) or set(c) != {"a", "b"}:
+                problems.append(f"{tag}: the clash is {strip(c)}")
+                continue
+            for side in ("a", "b"):
+                d = c[side]
+                if (not isinstance(d, dict) or set(d) != {"after", "take"} or not isinstance(d["after"], list)
+                        or not all(is_node(x) for x in d["after"]) or not is_node(d["take"])):
+                    problems.append(f"{tag}: the side {side} of the clash is {strip(d)}")
+    return None if problems else readings
+
+
+def impact_checks(res, prefix, proc, e, rows, ctx, limits):
+    """The readings of the impacts of one choice against its rows, each a
+    decision with the cost paid up to the choice: shape, separable,
+    classify, sets, minimal, minimum."""
+    v = e["choice"]["id"]
+    problems = []
+    try:
+        readings = check_impacts_shape(proc, e, rows, problems)
+    except (KeyError, TypeError, AttributeError) as err:
+        problems.append(f"choice {v}: the impacts do not read: {type(err).__name__} {err}")
+        readings = None
+    if problems or readings is None:
+        res.fail(prefix + "impacts-shape", "; ".join(problems[:4]) or f"choice {v}: the impacts do not read", **ctx)
+        return
+    res.ok(prefix + "impacts-shape")
+    decided = {(trail, action): cost for (_, action, trail, cost) in rows}
+    listed_sets = {}
+    for r in readings:
+        avail = r["available"]
+        tag = f"choice {v}, the reading {r['time']}"
+        # separable: no two histories pay the same on the available
+        # components and are decided differently
+        clash = clash_on(rows, avail)
+        if (clash is None) != r["separable"]:
+            if clash is None:
+                res.fail(prefix + "impacts-separable", f"{tag}: the tool says not separable, no two decisions pay the "
+                         f"same on {avail} and take different children", **ctx)
+            else:
+                a, b = clash
+                res.fail(prefix + "impacts-separable", f"{tag}: the tool says separable; after {list(a[2])} and after "
+                         f"{list(b[2])} the cost is {shown_cost(a[3])} and {shown_cost(b[3])}, the same on {avail}, "
+                         f"and the strategy takes {a[1]} and {b[1]}", **ctx)
+        elif clash is not None:
+            c = r["clash"]
+            da = (tuple(x["id"] for x in c["a"]["after"]), c["a"]["take"]["id"])
+            db = (tuple(x["id"] for x in c["b"]["after"]), c["b"]["take"]["id"])
+            bad = None
+            if da not in decided or db not in decided:
+                bad = (f"{tag}: the clash names after {list(da[0])} take {da[1]} and after {list(db[0])} take {db[1]}, "
+                       f"not both decisions of the strategy at the choice")
+            elif da[1] == db[1]:
+                bad = f"{tag}: the two decisions of the clash take the same child {da[1]}"
+            elif projection(decided[da], avail) != projection(decided[db], avail):
+                bad = (f"{tag}: the two decisions of the clash pay {shown_cost(decided[da])} and "
+                       f"{shown_cost(decided[db])}, not the same on {avail}")
+            if bad:
+                res.fail(prefix + "impacts-separable", bad, **ctx)
+            else:
+                res.ok(prefix + "impacts-separable")
+            res.note("readings not separable")
+        else:
+            res.ok(prefix + "impacts-separable")
+        trees = [("minimum", r["minimum"], tuple(avail))] if r["minimum"] is not None else []
+        trees += [(f"set {t['components']}", t, tuple(t["components"])) for t in r["sets"]]
+        # classify: every tree comes to the child the strategy takes, on
+        # the cost of every history
+        for label, t, _ in trees:
+            bad = None
+            for (hist, action, trail, cost) in rows:
+                try:
+                    leaf = impact_evaluate(t["tree"], cost)
+                except NoBranch as err:
+                    bad = f"{tag}: the {label} tree after {list(trail)}: {err}"
+                    break
+                if leaf != action:
+                    bad = (f"{tag}: after {list(trail)}, paying {shown_cost(cost)}, the strategy takes {action}, "
+                           f"the {label} tree takes {leaf}")
+                    break
+            if bad:
+                res.fail(prefix + "impacts-classify", bad, **ctx)
+            else:
+                res.ok(prefix + "impacts-classify")
+        # sets: the minimal separable subsets by exhaustion, in order, each
+        # read in full by its tree
+        mine = minimal_sets_on(rows, avail)
+        listed = [tuple(t["components"]) for t in r["sets"]]
+        if listed != mine:
+            res.fail(prefix + "impacts-sets", f"{tag}: the tool lists the sets {[list(s) for s in listed]} (the "
+                     f"components each tree reads), the minimal separable sets are {[list(s) for s in mine]}", **ctx)
+        else:
+            res.ok(prefix + "impacts-sets")
+        listed_sets[r["time"]] = listed
+        # minimal: the fewest tests, then the least depth, by exhaustion
+        # over the cuts, on the histories distinct on the components
+        for label, t, comps in trees:
+            if t["minimal"] is not True:
+                res.note("impact trees not claimed minimal")
+                continue
+            rows_d = distinct_rows(rows, comps)
+            statements = cut_statements(rows_d, comps)
+            if len(rows_d) > limits[0] or len(statements) > limits[1]:
+                res.skip(f"impacts-minimal: more than {limits[0]} rows or {limits[1]} statements")
+                continue
+            truth = [tuple(row[3][c] <= x for (c, x) in statements) for row in rows_d]
+            best = fewest(truth, [row[1] for row in rows_d])
+            if best is None:
+                res.fail(prefix + "impacts-minimal", f"{tag}: no tree on the cuts of {list(comps)} separates the "
+                         f"histories, the {label} tree claims to", **ctx)
+            elif best != (t["tests"], t["depth"]):
+                res.fail(prefix + "impacts-minimal", f"{tag}: the {label} tree says {t['tests']} tests and depth "
+                         f"{t['depth']}, the fewest are {best[0]} tests, then depth {best[1]}, on {len(rows_d)} "
+                         f"histories and the cuts {[(c, str(x)) for c, x in statements]}", **ctx)
+            else:
+                res.ok(prefix + "impacts-minimal")
+                if best[0] > 0:
+                    res.note("impact trees with a test, checked by exhaustion")
+        # minimum: no set tree has fewer tests, the same count when the
+        # minimum reads exactly a minimal set, and it reads a superset of one
+        if r["minimum"] is not None:
+            m = r["minimum"]
+            if m["minimal"] is not True or any(t["minimal"] is not True for t in r["sets"]):
+                res.skip("impacts-minimum: a tree not claimed minimal")
+            else:
+                bad = []
+                for t in r["sets"]:
+                    if m["tests"] > t["tests"]:
+                        bad.append(f"the minimum has {m['tests']} tests, the tree on {t['components']} {t['tests']}")
+                    elif m["components"] == t["components"] and m["tests"] != t["tests"]:
+                        bad.append(f"the minimum reads exactly {t['components']} with {m['tests']} tests, the tree "
+                                   f"on that set has {t['tests']}")
+                if not any(set(s) <= set(m["components"]) for s in mine):
+                    bad.append(f"the minimum reads {m['components']}, no superset of a minimal set of "
+                               f"{[list(s) for s in mine]}")
+                if bad:
+                    res.fail(prefix + "impacts-minimum", f"{tag}: " + "; ".join(bad), **ctx)
+                else:
+                    res.ok(prefix + "impacts-minimum")
+    # the sets of the reading without the time are those of the reading
+    # with it that leave the time out
+    if "in" in listed_sets and "out" in listed_sets:
+        want = [s for s in listed_sets["in"] if 0 not in s]
+        if listed_sets["out"] != want:
+            res.fail(prefix + "impacts-sets", f"choice {v}: the sets of the reading out are "
+                     f"{[list(s) for s in listed_sets['out']]}, the sets of the reading in without the time are "
+                     f"{[list(s) for s in want]}", **ctx)
+        else:
+            res.ok(prefix + "impacts-sets")
+
+
+# ---------------------------------------------------------------------------
 # a result: checks made, failed, skipped
 # ---------------------------------------------------------------------------
 
@@ -524,18 +944,19 @@ class Result:
 
 def rows_of(rep: Replayer, proc: Process, decisions):
     """The decisions by the choice they are taken at: (draws by passes,
-    action, trail). An error is a decision that is no decision at a choice."""
+    action, trail, cost paid up to the choice). An error is a decision that
+    is no decision at a choice."""
     by_choice, errors = {}, []
     for trail, action in decisions:
         try:
-            v, assign = rep.due(trail)
+            v, assign, cost = rep.due(trail)
         except BadTrail as e:
             errors.append(f"the decision after {list(trail)} take {action} does not replay: {e}")
             continue
         if action not in proc.children(v):
             errors.append(f"the decision after {list(trail)} takes {action}, no child of the choice {v}")
             continue
-        by_choice.setdefault(v, []).append((assign, action, tuple(trail)))
+        by_choice.setdefault(v, []).append((assign, action, tuple(trail), cost))
     return by_choice, errors
 
 
@@ -643,7 +1064,8 @@ def check_shape(proc: Process, e, rows, problems):
 
 def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point, rep=None, limits=(9, 10)):
     """classify, trees, names, shape and minimal on one strategy and its
-    trees. Returns the rows by choice, or None when the strategy does not
+    trees, and the impacts-* checks on the readings of the impacts.
+    Returns the rows by choice, or None when the strategy does not
     replay."""
     rep = rep or Replayer(proc, K)
     ctx = dict(point=point, trees=explanation, strategy=[[list(t), a] for t, a in decisions][:200])
@@ -682,7 +1104,7 @@ def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point
         if e is None:
             continue
         bad = None
-        for (hist, action, trail) in rows:
+        for (hist, action, trail, _) in rows:
             try:
                 leaf = evaluate(e["tree"], hist)
                 if leaf != action:
@@ -704,14 +1126,14 @@ def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point
         else:
             res.ok(prefix + "shape")
         # what a test may state: a draw, and a value it gave in some row
-        statements = sorted({(key, val) for (hist, _, _) in rows for key, val in hist.items()})
+        statements = sorted({(key, val) for (hist, _, _, _) in rows for key, val in hist.items()})
         if e["minimal"] is not True:
             res.note("trees not claimed minimal")
         elif len(rows) > limits[0] or len(statements) > limits[1]:
             res.skip(f"minimal: more than {limits[0]} rows or {limits[1]} statements")
         else:
-            truth = [tuple(hist.get(key) == val for (key, val) in statements) for (hist, _, _) in rows]
-            best = fewest(truth, [a for (_, a, _) in rows])
+            truth = [tuple(hist.get(key) == val for (key, val) in statements) for (hist, _, _, _) in rows]
+            best = fewest(truth, [a for (_, a, _, _) in rows])
             if best is None:
                 res.fail(prefix + "minimal", f"choice {v}: no tree on the statements separates the rows", **ctx)
             elif best != (e["tests"], e["depth"]):
@@ -722,6 +1144,7 @@ def analyse(res: Result, prefix, proc: Process, K, decisions, explanation, point
                 res.ok(prefix + "minimal")
                 if best[0] > 0:
                     res.note("minimal trees with a test, checked by exhaustion")
+        impact_checks(res, prefix, proc, e, rows, ctx, limits)
     return by_choice
 
 
@@ -985,7 +1408,7 @@ def valid(rep: Replayer, proc: Process, decisions):
         return errors[0]
     for v, rows in by_choice.items():
         seen = {}
-        for (assign, action, trail) in rows:
+        for (assign, action, trail, _) in rows:
             key = frozenset(assign.items())
             if seen.setdefault(key, action) != action:
                 return f"two actions at the choice {v} after the same draws"
@@ -1035,7 +1458,7 @@ def page_checks(res: Result, proc: Process, K, port, points, rng, final_trail, n
     expect_error("range", f"{dots}>x", "an action that is no number")
     expect_error("range", f"a.b>{action0}", "entries that are no numbers")
     expect_error("range", f"{dots}>{action0}>{action0}", "two > in one decision")
-    v0, _ = rep.due(trail0)
+    v0, _, _ = rep.due(trail0)
     expect_error("not a child", f"{dots}>{v0}", "the action is the choice itself")
     strangers = [x for x in range(1, n + 1) if x not in proc.children(v0)]
     x = rng.choice(strangers)

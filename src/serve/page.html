@@ -177,6 +177,9 @@
   .xbr { margin: 2px 0 2px 10px; }
   .xval { color: var(--muted); }
   .xleaf { font-weight: 600; }
+  .xsel { margin: 4px 0 2px; flex-wrap: wrap; border-radius: 12px; }
+  .xcount { font-size: 12px; color: var(--muted); margin: 4px 0 2px; }
+  .xnote { font-size: 12px; color: var(--muted); margin: 2px 0 2px; }
   #sview { margin: 0 0 8px; }
   /* the parallel coordinates split by direction */
   .pcs { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
@@ -1462,7 +1465,7 @@ function select(i, reveal = true) {
     + `<div style="margin-bottom:7px">expected: ${values}</div>` + cont
     + `<div class="seg" id="sview" role="radiogroup" aria-label="how the strategy is shown">`
     + `<button type="button" data-v="decisions" role="radio">Decisions</button>`
-    + `<button type="button" data-v="explanation" role="radio">Explanation</button></div>`
+    + `<button type="button" data-v="explanation" role="radio">Explainers</button></div>`
     + lines + '<div id="sexpl" hidden></div>';
   $('tobounds').addEventListener('click', () => pointToWindow(p));
   $('sview').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
@@ -1502,7 +1505,7 @@ const xref = (n) => $('detail').checked ? ' ' + label(n) : '';
 // depth, the outermost at depth 1, so that one loop has one name through
 // the whole tree.
 let XDEEP = false;
-const chainOf = (n) => n.take ? 0 : Math.max(n.passes.length + (n.loop ? 1 : 0), chainOf(n.yes), chainOf(n.no));
+const chainOf = (n) => n.take ? 0 : Math.max(n.passes ? n.passes.length + (n.loop ? 1 : 0) : 0, chainOf(n.yes), chainOf(n.no));
 function passesText(n) {
   const q = n.passes;
   if (!q.length) return '';
@@ -1525,12 +1528,127 @@ function statement(n) {
   // the draw after the last pass does not exist, the exit there being forced
   return `${passesText(n)}${which} ${n.value.is === 'again' ? 'ran again' : 'was left'} after its pass ${n.pass}`;
 }
-function explNode(n) {
+// A tree as nested "if this, otherwise": a leaf takes a region, a test is
+// written by `stmt`, the sentence of its statement.
+function explNode(n, stmt) {
   if (n.take) return `<span class="xleaf">take ${label(n.take)}</span>`;
   const side = (head, t) => t.take
-    ? `<div class="xq"><span class="xval">${head}:</span> ${explNode(t)}</div>`
-    : `<div class="xq"><span class="xval">${head}:</span></div><div class="xbr">${explNode(t)}</div>`;
-  return `<div class="xtest">${side('if ' + statement(n), n.yes)}${side('otherwise', n.no)}</div>`;
+    ? `<div class="xq"><span class="xval">${head}:</span> ${explNode(t, stmt)}</div>`
+    : `<div class="xq"><span class="xval">${head}:</span></div><div class="xbr">${explNode(t, stmt)}</div>`;
+  return `<div class="xtest">${side('if ' + stmt(n), n.yes)}${side('otherwise', n.no)}</div>`;
+}
+// What a test on the impacts states: one component paid so far is at most
+// one value, at least it on a maximized component, and the time elapsed
+// when the component is the time. The value is exact, its decimal beside
+// it when it is a fraction.
+function cutText(n) {
+  const v = n.value.includes('/') && Number.isFinite(n.approx) ? `${n.value} (${num(n.approx)})` : n.value;
+  const what = n.time ? 'the time elapsed' : n.relation === 'at least' ? `the ${h(n.name)} so far` : `the ${h(n.name)} paid so far`;
+  return `${what} is ${n.relation} <code>${v}</code>`;
+}
+const countText = (t) => `${t.tests} ${t.tests === 1 ? 'test' : 'tests'}${t.minimal ? ', the fewest' : ', not known to be the fewest'}`;
+const sameSet = (a, b) => a.length === b.length && a.every((c, i) => c === b[i]);
+
+// The explainers of a choice, one option each, in a row: the tree on the
+// draws, which always exists; the tree with the fewest tests on every
+// impact and the time, when the time is in and a function of them exists;
+// the tree with the fewest tests on the impacts with the time left out,
+// when a function of those exists; then one tree per minimal set of
+// impacts on which the decision is a function, those with the time first,
+// each with the fewest tests on it, the sets the two trees above read
+// left out of the list. An option on the impacts is named by the impacts
+// its tree reads.
+function explainers(e) {
+  const opts = [{ key: 'draws', label: 'draws', tree: e.tree, stmt: statement,
+                  caption: `by the draws of nature: ${countText(e)}` }];
+  const notes = [];
+  const imp = e.impacts;
+  if (!imp || !imp.readings.length) return { opts, notes };
+  const names = imp.names;
+  const setLabel = (cs) => cs.length ? cs.map(c => h(names[c])).join(' + ') : 'no impact';
+  const none = (r) => r.clash
+    ? `No explainer by the impacts${r.time === 'out' ? ' with the time left out' : r.time === 'in' ? ' and the time' : ''}: `
+      + `${sentence(r.clash.a)}, and ${sentence(r.clash.b)}, after paying the same.`
+    : `No explainer by the impacts${r.time === 'out' ? ' with the time left out' : ''}.`;
+  const first = imp.readings[0], out = imp.readings[1];
+  const read = [];                         // the sets the two trees read, left out of the list
+  if (first.minimum) {
+    read.push(first.minimum.components);
+    opts.push({ key: 'min', label: setLabel(first.minimum.components), tree: first.minimum.tree, stmt: cutText,
+                caption: `the fewest tests on ${first.time === 'in' ? 'every impact and the time' : 'every impact'}: `
+                       + `${countText(first.minimum)}, reading ${setLabel(first.minimum.components)}` });
+  } else {
+    notes.push(none(first));
+  }
+  if (out) {
+    if (out.minimum) {
+      // the same tree with or without the time: one option
+      const same = first.minimum && sameSet(out.minimum.components, first.minimum.components) && out.minimum.tests === first.minimum.tests;
+      if (same) opts[opts.length - 1].caption += ', with or without the time';
+      else {
+        read.push(out.minimum.components);
+        opts.push({ key: 'min-out', label: setLabel(out.minimum.components), tree: out.minimum.tree, stmt: cutText,
+                    caption: `the fewest tests on the impacts, the time left out: ${countText(out.minimum)}, reading ${setLabel(out.minimum.components)}` });
+      }
+    } else if (first.minimum) {
+      notes.push(none(out));
+    }
+  }
+  // the minimal sets without the time are among those with it: one list,
+  // unless the reading with the time was cut past twelve components, when
+  // the sets of the reading without it, enumerated in full, are added
+  const withTime = (s) => first.time === 'in' && s.components.includes(0);
+  let listed = first.sets;
+  if (!first.sets_complete && out && out.sets_complete) listed = listed.concat(out.sets.filter(s => !first.sets.some(t => sameSet(t.components, s.components))));
+  const sets = listed.filter(s => !read.some(r => sameSet(r, s.components)));
+  for (const s of sets.filter(withTime).concat(sets.filter(s => !withTime(s)))) {
+    const alone = withTime(s) && s.components.length === 1;
+    opts.push({ key: 'set:' + s.components.join('.'), label: setLabel(s.components), tree: s.tree, stmt: cutText,
+                caption: alone ? `the time alone: ${countText(s)}`
+                       : `a minimal set of impacts${withTime(s) ? ' with the time' : ''}, ${setLabel(s.components)}: ${countText(s)}` });
+  }
+  if (!first.sets_complete) notes.push(`One minimal set${first.time === 'in' ? ' with the time' : ''} is shown; the others were not looked for, the components being more than twelve.`);
+  return { opts, notes };
+}
+// The explainers of a choice: its options in a row, the one chosen drawn
+// under them. A choice decided the same way at every history is one leaf
+// and has no options. The option chosen is kept per choice node.
+const XSEL = {};
+function explainerHtml(e) {
+  const head = `<div class="xchoice">The choice${xref(e.choice)} between ${label(e.options[0])} and ${label(e.options[1])} `
+    + `<span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}</span></div>`;
+  if (e.tests === 0) return head + explNode(e.tree, statement);
+  const { opts, notes } = explainers(e), id = e.choice.id;
+  let sel = XSEL[id];
+  if (!opts.some(o => o.key === sel)) sel = 'draws';
+  const pills = `<div class="seg xsel" role="radiogroup" aria-label="explainers of the choice" data-c="${id}">`
+    + opts.map(o => `<button type="button" role="radio" data-k="${o.key}" class="${o.key === sel ? 'on' : ''}" aria-checked="${o.key === sel}">${o.label}</button>`).join('')
+    + '</div>' + notes.map(n => `<div class="xnote">${n}</div>`).join('');
+  const o = opts.find(x => x.key === sel);
+  const body = `<div class="xcount">${o.caption}</div>` + ((XDEEP = chainOf(o.tree) >= 2), explNode(o.tree, o.stmt));
+  return head + pills + body;
+}
+function paintExplainers(p, d) {
+  const box = $('sexpl');
+  const timeIn = d.explanations.some(e => e.impacts && e.impacts.time);
+  box.innerHTML = d.explanations.map(explainerHtml).join('')
+    + `<div class="hint" style="margin-top:8px">Every option is one explainer of the choice. By the draws, each test is one
+       statement on one draw of nature, the draw named by the pass of every loop around it: true when that draw was taken and
+       gave that answer, false otherwise, when it gave the other answer and when it was not taken at all; the exit a loop is
+       forced to after its last pass is no draw. By the impacts, each test reads what the run has paid when the choice is due`
+    + (timeIn ? ', the time elapsed among the components' : '')
+    + `: such an explainer exists only when no two histories pay the same and take different regions. `
+    + (timeIn
+      ? `The first option on the impacts is the tree with the fewest tests on every impact and the time, the next the fewest
+         with the time left out, one option when they read the same impacts with as many tests, each named by the impacts it
+         reads; then one option per minimal set of impacts on which the decision is a function, those with the time first, `
+      : `The first option on the impacts is the tree with the fewest tests on every impact, named by the impacts it reads;
+         then one option per minimal set of impacts on which the decision is a function, `)
+    + `with the fewest tests on that set, the sets the trees before read left out.</div>`;
+  box.querySelectorAll('.xsel button').forEach(b => b.addEventListener('click', () => {
+    XSEL[+b.closest('.xsel').dataset.c] = b.dataset.k;
+    paintExplainers(p, d);
+  }));
 }
 // the server accepts this much for an explanation; a strategy past it is
 // explained by the command line
@@ -1549,11 +1667,14 @@ async function paintExplanation(p) {
       fail(`This strategy has ${p.steps.length} decisions, too many to be explained on the page: sdcpi explain, or sdcpi pareto with --explain 1, explains it.`);
       return;
     }
-    box.innerHTML = '<p class="status">Explaining\u2026</p>';
+    box.innerHTML = '<p class="status">Explaining…</p>';
     const body = new URLSearchParams({
       process: $('proc').value, name: DOC.name || '',
       time: LAST.time ? '1' : '0',
       max_iter: LAST.max_iter === undefined ? '1' : String(LAST.max_iter),
+      // the directions of the result, so that a maximized component is
+      // read as the search read it and shown at least its value
+      maximize: (LAST.maximized || []).map((m, j) => m ? d_names(LAST)[j] : '').filter(Boolean).join(','),
       decisions,
     });
     try {
@@ -1566,15 +1687,7 @@ async function paintExplanation(p) {
     if (!LAST || LAST.points[SELECTED] !== p || !box.isConnected) return;
   }
   if (d.error) { fail(d.error); return; }
-  box.innerHTML = d.explanations.map(e =>
-    `<div class="xchoice">The choice${xref(e.choice)} between ${label(e.options[0])} and ${label(e.options[1])} <span>${e.histories} ${e.histories === 1 ? 'history' : 'histories'}, `
-    + `${e.tests} ${e.tests === 1 ? 'test' : 'tests'}${e.minimal ? '' : ', not known to be the fewest'}</span></div>`
-    + ((XDEEP = chainOf(e.tree) >= 2), explNode(e.tree))).join('')
-    + `<div class="hint" style="margin-top:8px">Each test is one statement on one draw of nature, the draw named by the
-       pass of every loop around it. It is true when that draw was taken and gave that answer, and false otherwise: when
-       it gave the other answer, and when it was not taken at all. The exit a loop is forced to after its last pass is no
-       draw, and no test speaks of it. The strategy decides by the draws alone, its own earlier decisions being
-       determined by them.</div>`;
+  paintExplainers(p, d);
 }
 
 // The decisions of the strategy, SPAGE at a time, with a pager when there

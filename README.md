@@ -170,6 +170,56 @@ bound move the draws of the other branch in time, and a tree that reads one
 of them may take another branch. The note of the paper says when it does
 continue the strategy; the tool does not rely on it.
 
+**The impacts in place of the draws.** The journal paper gives a second
+explainer, which reads at a choice what the run has paid so far: the cost
+of the history at the state where the choice is due, the time elapsed in
+front when the expected time is in, then the impacts of the tasks closed.
+A function of that vector exists only when no two histories at which the
+strategy decides the choice pay the same and take different regions, and
+then a tree of tests "the euro paid so far is at most 40" separates them,
+two different vectors differing in some component. Where it exists it is
+given in two ways, since the fewest tests may need more components than a
+function needs: the tree with the fewest tests on every component, and one
+tree per minimal set of components on which a function exists, the least
+elements of the lattice of the sets that suffice, by size, each with the
+fewest tests on that set, such a tree reading every component of its set.
+With the time in, each reading is given with the time among the components
+and with it left out: the time alone may suffice, and then it is the one
+minimal set that holds it. On the page every choice has a row of options:
+`draws`, then the tree with the fewest tests on every impact and the time,
+then the fewest with the time left out, one option when the two read the
+same impacts with as many tests, each named by the impacts it reads, then
+one option per minimal set, those with the time first, the sets the trees
+before read left out of the row; a reading with no function is a line
+under the row naming two histories that pay the same and take different
+regions; a choice decided the same way at every history has no row. The command line prints
+the same after the tree on the draws, on the running example and the
+strategy that mends and then decides by the redo:
+
+    choice 16 (Courier or Counter): 2 histories, 1 test, the fewest
+      if the draw at the nature node 8 (Redo or Pass) took Redo: take Counter
+      otherwise: take Courier
+      by the impacts: 1 test, the fewest, reading time
+        if the time elapsed is at most 6: take Courier
+        otherwise: take Counter
+      by the impacts, the time left out: 1 test, the fewest, reading euro
+        if the euro paid so far is at most 40: take Courier
+        otherwise: take Counter
+      by the fewest impacts, hours: 1 test, the fewest
+        if the hours paid so far is at most 14: take Courier
+        otherwise: take Counter
+
+A reading with no function says so and names two histories that pay the
+same and take different regions; the sets of both readings are in the
+JSON, the sets without the time twice. A maximized component is carried negated
+by the engine and shown with its sign turned back, "at least" in place of
+"at most". The minimal sets are enumerated in full up to twelve
+components, the time among them, from the smallest, a set that holds one
+found being left out; past twelve one minimal set is found, the
+explanation says that the others were not looked for, and the sets of the
+reading with the time left out, when that one is still within twelve, are
+listed in their place.
+
 `explain` is `determine --explain 1`; `--explain-json F` writes the trees,
 and on `pareto` the option explains the strategy of every point, in the
 report and in the JSON. A leaf is `{"take": node}`; a test is `{"draw":
@@ -177,7 +227,16 @@ node, "loop": bool, "options": [...], "passes": [{"loop": node, "pass":
 i}, ...], "pass": j, "value": {"is": "child", "child": node} | {"is":
 "again"} | {"is": "out"}, "yes": tree, "no": tree}`, `passes` the loops
 above the node of the draw from the outermost, `pass` at a loop only, the
-pass of its own the draw follows. On the page the strategy of a chosen
+pass of its own the draw follows. Beside the tree on the draws every
+choice carries `impacts`: `{"time": bool, "names": [...], "readings":
+[...]}`, a reading being `{"time": "in" | "out" | "none", "available":
+[...], "separable": bool, "clash": null | {"a": {"after": [...], "take":
+node}, "b": {...}}, "minimum": null | tree, "sets": [tree, ...],
+"sets_complete": bool}`, with the time in the cost the readings `in` and
+`out` in that order and `none` otherwise, a tree `{"components": [...],
+"tests": n, "depth": d, "minimal": bool, "tree": ...}` whose tests are
+`{"component": j, "name": ..., "time": bool, "relation": "at most" | "at
+least", "value": exact, "approx": number, "yes": ..., "no": ...}`. On the page the strategy of a chosen
 point has two views, its decisions history by history and its explanation;
 the page asks the server for the trees at `POST /api/explain`, with the
 process and the decisions of the point. A strategy the search left partial
@@ -309,7 +368,7 @@ never fires at a loop node, whose closing is its exit, and the cost and the
 time are paid as before, by the fast forward alone.
 
 `MAX_ITER` is the option `--max-iter K` of every command that reads an
-instance, the field "Max iterations" of the page, 3 by default. With it the
+instance, the field "Max iterations" of the page, 1 by default. With it the
 MDP is finite: every loop makes at most `K` passes per activation, and an
 inner loop at most `K` passes per pass of the loop above it, so it may run
 more than `K` times over the whole run. `--max-iter inf` is the process with
@@ -434,7 +493,7 @@ more suites will arrive as the library evolves. The dispatcher knows
 only that contract, so the library stays free of what the suites
 measure, and the options of a suite are listed by its own `--help`.
 
-Seven suites test the tool and its page in every way at hand; each takes
+Nine suites test the tool and its page in every way at hand; each takes
 `--bin PATH` (the mirror without loops with `--no-loops`), prints its
 checks made, passed, failed and skipped, exits 0 exactly when nothing
 failed, and says the rest in its `--help`:
@@ -448,9 +507,18 @@ failed, and says the rest in its `--help`:
 | `page-api` | every route of the page server, the lifecycle of a search, the saved processes and their references, the hygiene of the server (`--port`, `--bench`) |
 | `page-ui` | the page driven in a headless browser through Playwright for Python, a screenshot per step (`--port`, `--bench`, `--shots DIR`), console errors counted as defects |
 | `harness-wide` | the exact harness of the loops over hundreds of random processes, the directed frontier against its oracle, the gap test |
+| `tolerance` | the frontier within tolerances: every strategy within them of a point found, no two points reported within them of each other, exact again at zero |
+| `explainer` | the explainer end to end on its outputs alone: every decision the leaf of its tree, the process walked by the trees paying the exact value, the fewest tests against an exhaustive search, the page equal to the command line, and the readings of the impacts (`--port`) |
 
 The suites start their own page servers on the ports they are given, with
 a store of their own, and never touch a server already running.
+
+Beside the suites, three checks call no suite dispatcher:
+`scripts/explainer/check_draws.py` checks the statements of the note on
+the explainer on an independent simulator of the semantics,
+`scripts/gap/check.py` the interval `continued` against its meaning, and
+`scripts/loops/check.py` the engine with loops against an exact backward
+induction, with `--directions N` an exact frontier oracle.
 
 The suite that confronts the built binary with the recorded reference
 campaign:

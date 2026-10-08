@@ -1,9 +1,10 @@
-# Loops in sdcpi-loop
+# Loops in sdcpi
 
-**Pietro Sala** — Version 0.1
+**Pietro Sala** — Version 0.2
 
-This repository is `sdcpi-parallel` with loops. Everything of the parent holds;
-this file states what the loops add, in the words the code and the note
+This repository is `sdcpi-loop` with the explainer, and `sdcpi-loop` is
+`sdcpi-parallel` with loops. Everything of the parents holds; this file
+states what the loops add, in the words the code and the note
 `parallel-paper/semantics-time.tex` of the paper repository share.
 
 ## Grammar

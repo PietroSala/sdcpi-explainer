@@ -52,10 +52,13 @@
 //! components than it needs to be a function; and one tree per minimal set
 //! of components on which a function exists, the least elements of the
 //! lattice of the sets that suffice, by size, each with the fewest tests on
-//! that set, a tree on a minimal set reading every component of it. With
-//! the time in, every reading is given with the time among the components
-//! and with it left out, since the time alone may suffice: then the one
-//! minimal set with the time in it is the time, the bottom of the lattice.
+//! that set, a tree on a minimal set reading every component of it. The
+//! sets that suffice are an upper set of the lattice of the subsets of the
+//! components, known from their minimal elements. With the time in, every
+//! reading is given with the time among the components and with it left
+//! out; the minimal sets without the time are the minimal sets with it
+//! that do not hold it, and the time alone may suffice, in which case it
+//! is the one minimal set that holds it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -754,25 +757,35 @@ pub fn render_text(tree: &Tree, explanations: &[Explanation], name: &dyn Fn(u32)
         if e.tests == 0 {
             continue;
         }
-        for r in &e.impacts {
-            let suffix = if r.clock == Clock::Out { ", the time left out" } else { "" };
+        // the options of the page, flat: the fewest tests on every
+        // component, the same with the time left out, then the minimal
+        // sets, those the two trees read left out
+        let first = &e.impacts[0];
+        let out_reading = e.impacts.get(1);
+        let mut read: Vec<&Vec<usize>> = Vec::new();
+        match &first.minimum {
+            None => out.push_str(&none_text(first, name)),
+            Some(m) => {
+                read.push(&m.components);
+                out.push_str(&format!(
+                    "  by the impacts: {}, reading {}\n",
+                    count_text(m.tests, m.minimal),
+                    component_names(tree, &m.components)
+                ));
+                impact_text_node(tree, &m.root, 2, name, &mut out);
+            }
+        }
+        if let Some(r) = out_reading {
             match &r.minimum {
-                None => {
-                    let ((ta, aa), (tb, ab)) = r.clash.as_ref().expect("a reading with no tree has a clash");
-                    out.push_str(&format!(
-                        "  by the impacts{suffix}: none, two histories pay the same and take different regions: {} take {}; {} take {}\n",
-                        trail_text(ta, name),
-                        name(*aa),
-                        trail_text(tb, name),
-                        name(*ab)
-                    ));
-                }
+                None => out.push_str(&none_text(r, name)),
                 Some(m) => {
-                    if r.clock == Clock::Out && e.impacts[0].minimum.as_ref() == Some(m) {
-                        out.push_str(&format!("  by the impacts{suffix}: the same\n"));
+                    let same = first.minimum.as_ref().map_or(false, |f| f.components == m.components && f.tests == m.tests);
+                    if same {
+                        out.push_str("  by the impacts, the time left out: the same\n");
                     } else {
+                        read.push(&m.components);
                         out.push_str(&format!(
-                            "  by the impacts{suffix}: {}, reading {}\n",
+                            "  by the impacts, the time left out: {}, reading {}\n",
                             count_text(m.tests, m.minimal),
                             component_names(tree, &m.components)
                         ));
@@ -780,27 +793,58 @@ pub fn render_text(tree: &Tree, explanations: &[Explanation], name: &dyn Fn(u32)
                     }
                 }
             }
-            // the minimal sets without the time are among those with it:
-            // they are listed once
-            if r.clock == Clock::Out {
-                continue;
+        }
+        // the minimal sets without the time are among those with it: one
+        // list, the sets with the time first
+        let with_time = |s: &ImpactTree| first.clock == Clock::In && s.components.contains(&0);
+        // unless the reading with the time was cut past the exhaustive
+        // enumeration, when the sets of the reading without it, complete,
+        // are added
+        let mut pool: Vec<&ImpactTree> = first.sets.iter().collect();
+        if let Some(r) = out_reading {
+            if !first.sets_complete && r.sets_complete {
+                pool.extend(r.sets.iter().filter(|s| !first.sets.iter().any(|t| t.components == s.components)));
             }
-            for s in &r.sets {
+        }
+        let listed: Vec<&ImpactTree> = pool.into_iter().filter(|s| !read.contains(&&s.components)).collect();
+        for s in listed.iter().filter(|s| with_time(s)).chain(listed.iter().filter(|s| !with_time(s))) {
+            if with_time(s) && s.components.len() == 1 {
+                out.push_str(&format!("  by the time alone: {}\n", count_text(s.tests, s.minimal)));
+            } else {
                 out.push_str(&format!(
-                    "  by the fewest impacts, {}: {}\n",
+                    "  by the fewest impacts{}, {}: {}\n",
+                    if with_time(s) { " with the time" } else { "" },
                     component_names(tree, &s.components),
                     count_text(s.tests, s.minimal)
                 ));
-                impact_text_node(tree, &s.root, 2, name, &mut out);
             }
-            if !r.sets_complete {
-                out.push_str(&format!(
-                    "  by the fewest impacts: one minimal set found, the others not looked for past {SETS_EXHAUSTIVE} components\n"
-                ));
-            }
+            impact_text_node(tree, &s.root, 2, name, &mut out);
+        }
+        if !first.sets_complete {
+            out.push_str(&format!(
+                "  by the fewest impacts: one minimal set found, the others not looked for past {SETS_EXHAUSTIVE} components\n"
+            ));
         }
     }
     out
+}
+
+/// The line of a reading with no tree: the two histories that pay the
+/// same and take different regions.
+fn none_text(r: &ImpactReading, name: &dyn Fn(u32) -> String) -> String {
+    let suffix = if r.clock == Clock::Out { ", the time left out" } else { "" };
+    match &r.clash {
+        Some(((ta, aa), (tb, ab))) => format!(
+            "  by the impacts{suffix}: none, two histories pay the same and take different regions: {} take {}; {} take {}\n",
+            trail_text(ta, name),
+            name(*aa),
+            trail_text(tb, name),
+            name(*ab)
+        ),
+        // a function exists and no tree was found: the search does not
+        // come here, every separable set of rows being parted by a cut
+        None => format!("  by the impacts{suffix}: none\n"),
+    }
 }
 
 /// A trail in a sentence: the nodes it writes, by their names.
@@ -1222,8 +1266,10 @@ mod tests {
         let text = render_text(&t, &e, &|id| crate::serve::name_of(&t, id));
         assert!(text.contains("by the impacts: 1 test, the fewest, reading "), "{text}");
         assert!(text.contains("paid so far is at most 1: take "), "{text}");
-        assert!(text.contains("by the fewest impacts, x: 1 test, the fewest"), "{text}");
-        assert!(text.contains("by the fewest impacts, y: 1 test, the fewest"), "{text}");
+        // the set the minimum reads is left out of the list, the other is there
+        let m = r.minimum.as_ref().unwrap().components[0];
+        assert!(!text.contains(&format!("by the fewest impacts, {}: ", impact_name(&t, m))), "{text}");
+        assert!(text.contains(&format!("by the fewest impacts, {}: 1 test, the fewest", impact_name(&t, 1 - m))), "{text}");
     }
 
     /// With the time in, the readings are two, and the minimal sets with
@@ -1265,7 +1311,8 @@ mod tests {
         let text = render_text(&t, &e, &|id| crate::serve::name_of(&t, id));
         assert!(text.contains("if the time elapsed is at most 1: take D"), "{text}");
         assert!(text.contains("by the impacts, the time left out: none, two histories pay the same and take different regions: after A take D; after B take C"), "{text}");
-        assert!(text.contains("by the fewest impacts, time: 1 test, the fewest"), "{text}");
+        // the one minimal set is the one the minimum reads: left out of the list
+        assert!(!text.contains("by the fewest impacts"), "{text}");
     }
 
     /// A decision that is the parity of two draws needs both impacts: the
