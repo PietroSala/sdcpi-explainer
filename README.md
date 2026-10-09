@@ -41,7 +41,10 @@ passes a loop makes in one activation before its exit is forced; a point
 whose strategy met a forced exit shows under its expected values what the
 value becomes with the loops unbounded, whatever is taken past the bound,
 lower to upper per component, and the table carries the upper increments in
-a column "loops" of its own. The
+a column "loops" of its own. The panel
+that loads a process of the benchmark has a switch "Loops", shown when the
+server has the grid with loops (`--bench-loops DIR`, see `LOOPS.md`): the
+same coordinates then come from the benchmark with loops. The
 server is in the binary, so there is nothing to install beyond what is
 already there, it runs on the three desktop systems and inside a container
 alike, and it binds `127.0.0.1` and never every address, because it runs a

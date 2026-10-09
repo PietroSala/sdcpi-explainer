@@ -81,7 +81,7 @@ sdcpi  on-the-fly strategy synthesis for BPMN+CPI processes
   sdcpi info      <instance>
   sdcpi bound     <instance>
   sdcpi optima    <instance>
-  sdcpi serve     [--port N]
+  sdcpi serve     [--port N] [--bench DIR] [--bench-loops DIR] [--saved F]
   sdcpi test      [<suite>] [options...]
 
 test runs scripts/<suite>/run.py beside the tree of this executable,
@@ -275,7 +275,7 @@ pub(crate) struct Args {
 
 /// Every option some command takes: an option outside this list is a
 /// mistake, refused with its name, never ignored in silence.
-const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "explain", "explain-json", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
+const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "bench-loops", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "explain", "explain-json", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
 
 pub(crate) fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut out = Args {

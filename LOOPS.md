@@ -151,6 +151,20 @@ whether the frontier is closed or not.
 `bound` alone. The page takes `max_iter` with the frontier request, and shows
 `continued` beside a point when its loops met a forced exit.
 
+The benchmark with loops is the branch `loops` of process-impact-benchmarks,
+one thousand skeletons with a loop at least each, completed by the builder of
+the first stage with `--loops` (impacts by the six modes in two to ten
+dimensions, durations as before, the alternation of choice and nature forced
+through the loops, a loop counting as a nature, its probability of running
+again uniform in the unit interval) into a grid of fifty-four thousand
+instances, `scripts/pareto-frontier/experiment/instances-loops`, out of git.
+`sdcpi serve --bench-loops DIR` names that grid, or the environment
+`SDCPI_BENCH_LOOPS`, or the folder `<bench>-loops` beside the one of `--bench`;
+the panel of the benchmark on the page then shows the switch Loops, which
+loads the same coordinates from the grid with loops, the key suffixed `-loops`,
+and an instance not on disk is drawn by the builder with `--loops` when the
+checkout of the branch sits beside it.
+
 `--maximize a,b,...` on every command that reads an instance maximizes the
 components named, the time included once it is in. An impact maximized is an
 impact negated, the engine minimizing the negation and the sign turned back

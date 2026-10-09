@@ -275,6 +275,7 @@
     </div>
     <label for="b-m">impact mode</label>
     <select id="b-m"></select>
+    <label class="switch" for="bloops" id="bloops-row" hidden title="the same coordinates in the grid with loops, drawn from the branch loops of the benchmark: every process holds a loop at least, and the alternation of choice and nature is forced through the loops"><input id="bloops" type="checkbox"><span class="track"></span><span>Loops</span></label>
     <label class="switch" for="regen"><input id="regen" type="checkbox"><span class="track"></span><span>Regenerate the impacts</span></label>
     <div class="row">
       <div><label for="seed">seed</label><input id="seed" type="number" value="20260815"></div>
@@ -415,6 +416,8 @@ fetch('/api/hello').then(r => r.json()).then(h => {
       const o = document.createElement('option'); o.value = m; o.textContent = m; $('b-m').appendChild(o);
     });
     $('bench').hidden = false;
+    // the grid with loops, when the server has it or can draw it
+    $('bloops-row').hidden = !h.loops;
   }
   refreshDiagram();
 }).catch(() => {});
@@ -425,6 +428,7 @@ $('load').addEventListener('click', async () => {
     nested: $('b-n').value, independent: $('b-i').value, process: $('b-k').value,
     impacts: $('b-d').value, mode: $('b-m').value,
     regenerate: $('regen').checked ? '1' : '0', seed: $('seed').value,
+    loops: $('bloops').checked ? '1' : '0',
   });
   $('load').disabled = true;
   $('benchnote').textContent = 'Loading…';

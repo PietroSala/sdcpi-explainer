@@ -72,6 +72,11 @@ const EXAMPLE: &str = "\
 /// is the stage of the first suite beside it, when it is there.
 pub struct Bench {
     instances: PathBuf,
+    /// The folder of the instances with loops, the grid drawn from the
+    /// branch `loops` of the benchmark: `--bench-loops`, or the environment
+    /// `SDCPI_BENCH_LOOPS`, or the folder beside `instances` named
+    /// `<instances>-loops`, where the generator writes with `--loops`.
+    loops: PathBuf,
     generator: Option<PathBuf>,
     /// The file the saved processes live in: one JSON object, name to text,
     /// rewritten whole at every save, which is what a few kilobytes deserve.
@@ -79,7 +84,7 @@ pub struct Bench {
 }
 
 impl Bench {
-    fn locate(flag: Option<&str>, saved: Option<&str>) -> Bench {
+    fn locate(flag: Option<&str>, loops_flag: Option<&str>, saved: Option<&str>) -> Bench {
         let root = std::env::current_exe()
             .ok()
             .and_then(|e| e.ancestors().nth(3).map(|p| p.to_path_buf()));
@@ -106,10 +111,28 @@ impl Bench {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("SDCPI_SAVED").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("sdcpi-processes.json"));
-        Bench { instances, generator, saved }
+        let loops = loops_flag
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("SDCPI_BENCH_LOOPS").map(PathBuf::from))
+            .unwrap_or_else(|| {
+                let name = instances.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "instances".into());
+                instances.with_file_name(format!("{name}-loops"))
+            });
+        Bench { instances, loops, generator, saved }
     }
     fn available(&self) -> bool {
         self.instances.is_dir() || self.generator.is_some()
+    }
+    /// Whether a process with loops can be loaded: the grid with loops is
+    /// on disk, or the generator is there with the checkout of the branch
+    /// `loops` beside it, from which it draws an instance not on disk.
+    fn loops_available(&self) -> bool {
+        self.loops.is_dir()
+            || self
+                .generator
+                .as_ref()
+                .and_then(|g| g.parent().map(|d| d.join("process-impact-benchmarks-loops").is_dir()))
+                .unwrap_or(false)
     }
 }
 
@@ -118,7 +141,7 @@ pub fn cmd_serve(args: &[String]) -> i32 {
         Ok(a) => a,
         Err(e) => return crate::fail(&e),
     };
-    let bench = Bench::locate(args.flag("bench"), args.flag("saved"));
+    let bench = Bench::locate(args.flag("bench"), args.flag("bench-loops"), args.flag("saved"));
     let port: u16 = match args.flag("port") {
         None => 8080,
         Some(p) => match p.parse() {
@@ -709,7 +732,7 @@ fn esc(s: &str) -> String {
 fn hello(bench: &Bench) -> String {
     let modes: Vec<String> = crate::text::MODES.iter().map(|m| esc(m)).collect();
     format!(
-        "{{\"grammar\": {}, \"example\": {}, \"bench\": {}, \"modes\": [{}]}}",
+        "{{\"grammar\": {}, \"example\": {}, \"bench\": {}, \"loops\": {}, \"modes\": [{}]}}",
         esc(
             "(name, duration, {impact: value, ...}) is a task, the map naming only the \
              impacts that are not zero; , is a sequence, || a parallel, ^ a choice of \
@@ -724,6 +747,7 @@ fn hello(bench: &Bench) -> String {
         ),
         esc(EXAMPLE),
         bench.available(),
+        bench.available() && bench.loops_available(),
         modes.join(", ")
     )
 }
@@ -762,9 +786,15 @@ fn load_bench(body: &str, bench: &Bench) -> String {
     let seed = field(body, "seed")
         .and_then(|v| v.trim().parse::<u64>().ok())
         .unwrap_or(20260815);
-    let key = format!("{n}-{i}-{k}-{d}-{mode}");
-    let path = bench
-        .instances
+    // the process with loops: the same coordinates in the grid drawn from
+    // the branch with loops of the benchmark
+    let loops = matches!(field(body, "loops").as_deref(), Some("1") | Some("true"));
+    if loops && !bench.loops_available() {
+        return err("the instances with loops are not on disk and the generator has no checkout of the branch loops beside it");
+    }
+    let key = if loops { format!("{n}-{i}-{k}-{d}-{mode}-loops") } else { format!("{n}-{i}-{k}-{d}-{mode}") };
+    let folder = if loops { &bench.loops } else { &bench.instances };
+    let path = folder
         .join(format!("{n}-nested"))
         .join(format!("{i}-independent"))
         .join(format!("{k}-process_number"))
@@ -775,13 +805,17 @@ fn load_bench(body: &str, bench: &Bench) -> String {
                 "the instance {key} is not on disk and no generator is beside this executable"
             ));
         };
-        let run = std::process::Command::new("python3")
+        let mut command = std::process::Command::new("python3");
+        command
             .arg(generator)
             .args(["--nested", &n.to_string(), "--independent", &i.to_string()])
             .args(["--process-number", &k.to_string(), "--dimensions", &d.to_string()])
             .args(["--mode", &mode, "--seed", "20260815", "--out"])
-            .arg(&bench.instances)
-            .output();
+            .arg(folder);
+        if loops {
+            command.arg("--loops");
+        }
+        let run = command.output();
         match run {
             Ok(o) if o.status.success() && path.is_file() => {}
             Ok(o) => {

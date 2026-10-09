@@ -223,11 +223,12 @@ def describe(path, fields):
 
 
 class Server:
-    def __init__(self, binary, port, store, bench, log):
+    def __init__(self, binary, port, store, bench, log, bench_loops=None):
         self.binary = binary
         self.port = port
         self.store = store
         self.bench = bench
+        self.bench_loops = bench_loops
         self.log = log
         self.proc = None
 
@@ -235,6 +236,8 @@ class Server:
         args = [self.binary, "serve", "--port", str(self.port), "--saved", self.store]
         if self.bench:
             args += ["--bench", self.bench]
+        if self.bench_loops:
+            args += ["--bench-loops", self.bench_loops]
         self.logfile = open(self.log, "ab")
         self.proc = subprocess.Popen(args, stdout=self.logfile, stderr=subprocess.STDOUT)
         client = Client(self.port)
@@ -363,6 +366,9 @@ def section_hello(L, c, args):
     L.check("hello bench is a boolean", isinstance(h.get("bench"), bool), "GET /api/hello", h)
     if args.bench:
         L.check("hello bench is true with --bench", h.get("bench") is True, "GET /api/hello", h)
+    L.check("hello loops is a boolean", isinstance(h.get("loops"), bool), "GET /api/hello", h)
+    if args.bench_loops:
+        L.check("hello loops is true with --bench-loops", h.get("loops") is True, "GET /api/hello", h)
     modes = h.get("modes")
     expected = ["random", "bagging_divide", "bagging_remove", "bagging_remove_divide", "bagging_remove_reverse", "bagging_remove_reverse_divide"]
     L.check("hello lists the six modes", modes == expected, "GET /api/hello", h)
@@ -413,6 +419,22 @@ def section_bench(L, c, args, hello):
             L.check(f"bench {key} names impacts among the {d_}", names and set(names) <= {f"impact{j}" for j in range(d_)}, describe("/api/bench", fields), names)
             if mode == "random":
                 L.check(f"bench {key} names all {d_} impacts", names == [f"impact{j}" for j in range(d_)], describe("/api/bench", fields), names)
+    # the grid with loops: the same coordinates, the key suffixed, a loop in
+    # the text, and the panel refused when the server has no such grid
+    base = {"nested": 1, "independent": 1, "process": 1, "impacts": 2, "mode": "random", "regenerate": 0, "seed": 1}
+    if hello.get("loops"):
+        d = c.post("/api/bench", dict(base, loops=1))
+        ok = d.get("instance") == "1-1-1-2-random-loops" and isinstance(d.get("process"), str)
+        L.check("bench with loops answers the suffixed key and a text", ok, describe("/api/bench", dict(base, loops=1)), d)
+        if ok:
+            L.check("bench with loops gives a process with a loop", re.search(r"\(\s*0?\.\d+\s*\(", d["process"]) is not None or re.search(r"\(\s*\d\.\d+\s", d["process"]) is not None, describe("/api/bench", dict(base, loops=1)), d["process"][:200])
+            svg = c.post("/api/svg", {"process": d["process"]})
+            L.check("the process with loops draws", "svg" in svg and svg["svg"].count('class="task"') == tasks_in(d["process"]) > 0, describe("/api/svg", {"process": d["process"]}), svg.get("error"))
+            plain = c.post("/api/bench", dict(base, loops=0))
+            L.check("bench without the switch keeps the plain key", plain.get("instance") == "1-1-1-2-random", describe("/api/bench", dict(base, loops=0)), plain.get("instance"))
+    else:
+        d = c.post("/api/bench", dict(base, loops=1))
+        L.check("bench with loops is refused without a grid with loops", "error" in d, describe("/api/bench", dict(base, loops=1)), d)
     # regenerate with a seed: deterministic in the seed, other with another seed
     key = "1-1-1-2-random"
     if key in seen:
@@ -1333,6 +1355,7 @@ def main():
     ap.add_argument("--bin", required=True, help="the sdcpi binary")
     ap.add_argument("--port", type=int, default=8123, help="the port of the server the suite starts (default 8123)")
     ap.add_argument("--bench", default=None, help="the folder of the benchmark instances, for /api/bench")
+    ap.add_argument("--bench-loops", default=None, help="the folder of the instances with loops, for /api/bench with loops=1")
     ap.add_argument("--no-loops", action="store_true", help="the binary is the mirror without loops")
     ap.add_argument("--work", default=None, help="the scratch folder (default: a fresh temporary folder)")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder when it was temporary")
@@ -1366,7 +1389,7 @@ def main():
     print(f"binary  {binary}\nport    {args.port}\nwork    {work}\nbench   {args.bench or '(none)'}\nloops   {'no' if args.no_loops else 'yes'}")
 
     L = Ledger(args.verbose)
-    server = Server(binary, args.port, store, args.bench, log)
+    server = Server(binary, args.port, store, args.bench, log, bench_loops=args.bench_loops)
     try:
         server.start()
     except RuntimeError as e:
@@ -1379,7 +1402,7 @@ def main():
         return only is None or name in only
 
     try:
-        hello = section_hello(L, c, args) if wanted("hello") else {"bench": bool(args.bench), "modes": []}
+        hello = section_hello(L, c, args) if wanted("hello") else {"bench": bool(args.bench), "loops": bool(args.bench_loops), "modes": []}
         if wanted("bench"):
             section_bench(L, c, args, hello)
         if wanted("svg"):
