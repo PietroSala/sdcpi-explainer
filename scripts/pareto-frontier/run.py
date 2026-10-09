@@ -26,6 +26,18 @@ When the sweep of the grid is over the driver starts the next round by
 itself, the timeout doubled, owing only the runs that timed out, were
 killed or were skipped, the rule applying again at the new timeout, and
 so on until a round owes nothing.
+
+With --loops the campaign runs on the benchmark with loops, the grid drawn
+from the branch loops of the benchmark (make_bpmn_cpi.py --loops), in an
+experiment folder of its own, experiment-loops/ by default, and the bound
+on the passes of a loop becomes one more axis of the grid: --max-iters
+lists the bounds, every instance runs once per bound, after the modes, with
+--max-iter K given to the tool and to the PRISM model, and the key of a
+record ends in -K<bound>. A cell is then a diagonal, a number of impacts, a
+mode and a bound; the rule of the dead cells holds per bound, and a
+configuration that timed out on every instance of a cell at one bound is
+dead at the greater bounds of that cell too, more passes making nothing
+easier.
 """
 
 from __future__ import annotations
@@ -117,16 +129,19 @@ def call(cmd: list[str], timeout: float) -> tuple[int | None, str, str, bool]:
         _child = None
 
 
-def key_of(n: int, i: int, k: int, d: int, m: str) -> str:
-    return f"{n}-{i}-{k}-{d}-{m}"
+def key_of(n: int, i: int, k: int, d: int, m: str, max_iter: int | None = None) -> str:
+    base = f"{n}-{i}-{k}-{d}-{m}"
+    return base if max_iter is None else f"{base}-K{max_iter}"
 
 
 def pairs_of(diag: int) -> list[tuple[int, int]]:
     return [(n, diag - n) for n in range(1, 11) if 1 <= diag - n <= 10]
 
 
-def instances(max_diagonal: int | None, dims: list[int], modes: list[str]):
-    """The grid in the order of the campaign."""
+def instances(max_diagonal: int | None, dims: list[int], modes: list[str],
+              max_iters: list[int | None] = (None,)):
+    """The grid in the order of the campaign: the bound on the passes, when
+    there are loops, is the innermost axis after the modes."""
     for diag in range(2, 21):
         if max_diagonal and diag > max_diagonal:
             return
@@ -134,7 +149,8 @@ def instances(max_diagonal: int | None, dims: list[int], modes: list[str]):
             for k in range(1, 11):
                 for d in dims:
                     for m in modes:
-                        yield n, i, k, d, m
+                        for K in max_iters:
+                            yield n, i, k, d, m, K
 
 
 def host_info() -> dict:
@@ -154,10 +170,13 @@ def host_info() -> dict:
 
 class Campaign:
     def __init__(self, exp: Path, rnd: int, base_timeout: float, host: dict,
-                 anytime: bool = False, dead_cells: bool = True) -> None:
+                 anytime: bool = False, dead_cells: bool = True, loops: bool = False,
+                 max_iters: list[int | None] = (None,)) -> None:
         self.exp = exp
         self.anytime = anytime
         self.dead_cells = dead_cells
+        self.loops = loops
+        self.max_iters = list(max_iters)
         self.round = rnd
         self.timeout = base_timeout * (2 ** (rnd - 1))
         self.host = host
@@ -181,8 +200,11 @@ class Campaign:
             key = (f.parent.name, conf)
             if key not in self.status or self.status[key][0] < r:
                 self.status[key] = (r, json.loads(f.read_text()).get("status", "failed"))
-        self.dead: dict[tuple[str, int, str], int] = {}
-        self.alive: set[tuple[str, int, str, int]] = set()
+        self.dead: dict[tuple[str, int, str, int | None], int] = {}
+        self.alive: set[tuple[str, int, str, int | None, int]] = set()
+        # the cells found dead at a lower bound on the passes: (conf, d, m,
+        # diagonal) to the first bound at which every instance is undone
+        self.dead_below: dict[tuple[str, int, str, int], int] = {}
 
     def say(self, line: str) -> None:
         print(line, flush=True)
@@ -195,7 +217,7 @@ class Campaign:
         key = dict(nested=n, independent=i, process_number=k, dimensions=d, mode=m)
         path = gen.instance_path(self.instances, key, ".yaml")
         if not path.exists():
-            gen.build(n, i, k, d, m, SEED, self.instances)
+            gen.build(n, i, k, d, m, SEED, self.instances, loops=self.loops)
         return path
 
     def objectives(self, yaml: Path) -> list[int]:
@@ -210,11 +232,12 @@ class Campaign:
         totals = [float(x) for x in re.findall(r"-?\d+\.\d+", line)]
         return [i for i, t in enumerate(totals) if t != 0.0]
 
-    def model(self, key: str, yaml: Path) -> tuple[Path, str, list[int]]:
+    def model(self, key: str, yaml: Path, max_iter: int | None = None) -> tuple[Path, str, list[int]]:
         prism = self.models / f"{key}.prism"
         prop = self.models / f"{key}.prop"
+        bound = [] if max_iter is None else ["--max-iter", str(max_iter)]
         if not prism.exists():
-            subprocess.run([str(SDCPI), "to_prism", str(yaml), "--out", str(prism)], check=True)
+            subprocess.run([str(SDCPI), "to_prism", str(yaml), "--out", str(prism)] + bound, check=True)
         objectives = self.objectives(yaml)
         if not prop.exists():
             full = subprocess.run([str(SDCPI), "to_objective", str(yaml), "--pareto", "true"],
@@ -250,30 +273,53 @@ class Campaign:
 
     # -- the dead cells -----------------------------------------------------------
 
-    def dead_since(self, conf: str, d: int, m: str, diag: int) -> int | None:
-        """The diagonal below `diag` at which `conf` died for `d` impacts and
-        the mode `m`: a cell complete in the rounds so far on which every
-        instance is timed out, killed or skipped. `None` when it is alive."""
-        cell = (conf, d, m)
+    def cell_undone(self, conf: str, d: int, m: str, diag: int, K: int | None) -> bool | None:
+        """Whether every instance of the cell is timed out, killed or skipped
+        in the rounds so far; `None` while the cell is not complete."""
+        keys = [key_of(n, i, k, d, m, K) for n, i in pairs_of(diag) for k in range(1, 11)]
+        statuses = [self.status.get((key, conf)) for key in keys]
+        if any(st is None for st in statuses):
+            return None
+        return all(st[1] in UNDONE for st in statuses)
+
+    def dead_since(self, conf: str, d: int, m: str, diag: int, K: int | None = None) -> int | None:
+        """The diagonal below `diag` at which `conf` died for `d` impacts, the
+        mode `m` and the bound `K` on the passes: a cell complete in the
+        rounds so far on which every instance is timed out, killed or
+        skipped. `None` when it is alive."""
+        cell = (conf, d, m, K)
         if cell in self.dead and self.dead[cell] < diag:
             return self.dead[cell]
         for prior in range(2, diag):
-            if (conf, d, m, prior) in self.alive:
+            if (conf, d, m, K, prior) in self.alive:
                 continue
-            keys = [key_of(n, i, k, d, m) for n, i in pairs_of(prior) for k in range(1, 11)]
-            statuses = [self.status.get((key, conf)) for key in keys]
-            if any(st is None for st in statuses):
+            undone = self.cell_undone(conf, d, m, prior, K)
+            if undone is None:
                 continue  # the cell is not complete yet
-            if all(st[1] in UNDONE for st in statuses):
+            if undone:
                 self.dead[cell] = prior
                 return prior
-            self.alive.add((conf, d, m, prior))
+            self.alive.add((conf, d, m, K, prior))
+        return None
+
+    def dead_at_lower_bound(self, conf: str, d: int, m: str, diag: int, K: int | None) -> int | None:
+        """The lower bound on the passes at which `conf` died for this cell
+        of the diagonal: every instance undone there. `None` when none."""
+        if K is None:
+            return None
+        cell = (conf, d, m, diag)
+        if cell in self.dead_below and self.dead_below[cell] < K:
+            return self.dead_below[cell]
+        for lower in [x for x in self.max_iters if x is not None and x < K]:
+            if self.cell_undone(conf, d, m, diag, lower):
+                self.dead_below[cell] = lower
+                return lower
         return None
 
     # -- the runs --------------------------------------------------------------
 
-    def run_storm(self, key: str, yaml: Path) -> dict:
-        prism, prop, objectives = self.model(key, yaml)
+    def run_storm(self, key: str, yaml: Path, max_iter: int | None = None) -> dict:
+        prism, prop, objectives = self.model(key, yaml, max_iter)
         if not objectives:
             # Every impact is zero on every task: the frontier is the one point
             # of zeros, and there is nothing to ask.
@@ -370,24 +416,35 @@ class Campaign:
         buf.unlink()
         return record
 
-    def run_instance(self, n: int, i: int, k: int, d: int, m: str, only: set[str] | None) -> int:
-        key = key_of(n, i, k, d, m)
+    def run_instance(self, n: int, i: int, k: int, d: int, m: str, only: set[str] | None,
+                     K: int | None = None) -> int:
+        key = key_of(n, i, k, d, m, K)
         done = 0
         for conf, extra in CONFS:
             if only and conf not in only:
                 continue
             if not self.due(key, conf):
                 continue
-            since = self.dead_since(conf, d, m, n + i) if self.dead_cells else None
-            if since is not None:
+            since = self.dead_since(conf, d, m, n + i, K) if self.dead_cells else None
+            below = self.dead_at_lower_bound(conf, d, m, n + i, K) if self.dead_cells and since is None else None
+            if since is not None or below is not None:
                 record = {"tool": "storm" if conf == "storm" else "sdcpi", "status": "skipped",
-                          "seconds": 0.0, "points": [], "dead_since_diagonal": since}
+                          "seconds": 0.0, "points": []}
+                if since is not None:
+                    record["dead_since_diagonal"] = since
+                    why = f"dead since diagonal {since}"
+                else:
+                    record["dead_since_max_iter"] = below
+                    why = f"dead since the bound {below} on the passes"
                 self.write(key, conf, record)
-                self.say(f"{key:32} {conf:22} skipped, dead since diagonal {since}")
+                self.say(f"{key:32} {conf:22} skipped, {why}")
                 done += 1
                 continue
             yaml = self.instance(n, i, k, d, m)
-            record = self.run_storm(key, yaml) if conf == "storm" else self.run_ours(key, conf, extra, yaml)
+            bound = [] if K is None else ["--max-iter", str(K)]
+            record = self.run_storm(key, yaml, K) if conf == "storm" else self.run_ours(key, conf, extra + bound, yaml)
+            if K is not None:
+                record["max_iter"] = K
             self.write(key, conf, record)
             points = record.get("points_found", len(record.get("points", [])))
             self.say(f"{key:32} {conf:22} {record['status']:9} {points:>4} points "
@@ -421,7 +478,18 @@ def main() -> int:
                         "sweep is bounded by --max-diagonal and the time, not by the rule")
     p.add_argument("--only", nargs="+", default=None,
                    help="a subset of the configurations, storm or <library>-<ablation>-w<workers>")
+    p.add_argument("--loops", action="store_true",
+                   help="the benchmark with loops: the instances drawn by the builder with --loops, "
+                        "the experiment in experiment-loops/ unless --experiment says otherwise, "
+                        "and one run per bound of --max-iters")
+    p.add_argument("--max-iters", type=int, nargs="+", default=None,
+                   help="with --loops, the bounds on the passes of a loop, one run each (default 1)")
     a = p.parse_args()
+    if a.max_iters and not a.loops:
+        p.error("--max-iters wants --loops")
+    if a.loops and a.experiment == HERE / "experiment":
+        a.experiment = HERE / "experiment-loops"
+    max_iters: list[int | None] = list(a.max_iters or ([1] if a.loops else [None]))
 
     if not SDCPI.exists():
         print(f"{SDCPI} is missing: cargo build --release first", file=sys.stderr)
@@ -440,18 +508,19 @@ def main() -> int:
     rounds = 0
     while a.rounds is None or rounds < a.rounds:
         campaign = Campaign(a.experiment.resolve(), rnd, a.timeout, host, a.anytime,
-                            dead_cells=not a.no_dead_cells)
+                            dead_cells=not a.no_dead_cells, loops=a.loops, max_iters=max_iters)
         campaign.say(f"round {rnd}, timeout {campaign.timeout:g} s, "
                      f"{host['host']} {host['cpus']} cpus, "
                      f"sdcpi {host['sdcpi_commit'][:12]}, {host['storm']}"
                      + (", anytime buffer" if a.anytime else "")
-                     + (", dead cells off" if a.no_dead_cells else ""))
+                     + (", dead cells off" if a.no_dead_cells else "")
+                     + (f", loops, bounds on the passes {max_iters}" if a.loops else ""))
         seen = 0
         runs = 0
-        for n, i, k, d, m in instances(a.max_diagonal, a.dimensions, a.modes):
+        for n, i, k, d, m, K in instances(a.max_diagonal, a.dimensions, a.modes, max_iters):
             if a.limit is not None and seen >= a.limit:
                 break
-            runs += campaign.run_instance(n, i, k, d, m, set(a.only) if a.only else None)
+            runs += campaign.run_instance(n, i, k, d, m, set(a.only) if a.only else None, K)
             seen += 1
         campaign.say(f"round {rnd} over {seen} instances, {runs} runs done")
         rounds += 1
