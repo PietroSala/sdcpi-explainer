@@ -78,6 +78,10 @@ pub struct Meta {
     /// The loops of the process, as the header of an instance of the
     /// benchmark with loops counts them; zero when the header is silent.
     pub loops: u32,
+    /// The chain roots whose kind the loops fixed, and the loops that sit
+    /// right under a nature all the same, as the header counts them.
+    pub forced_roots: u32,
+    pub alternation_breaks: u32,
     pub xor_root_kind: String,
     pub source: String,
     pub expression: String,
@@ -576,6 +580,10 @@ impl<'a> Parser<'a> {
                 // the loops of the process, written by the builder of the benchmark
                 // with loops and read for the record alone
                 "loops" => self.meta.loops = num(self, value)? as u32,
+                // the chain roots the loops fixed and the breaks of the alternation,
+                // written beside the loops and read for the record alone
+                "forced_roots" => self.meta.forced_roots = num(self, value)? as u32,
+                "alternation_breaks" => self.meta.alternation_breaks = num(self, value)? as u32,
                 "xor_root_kind" => self.meta.xor_root_kind = value.to_string(),
                 "source" => self.meta.source = value.to_string(),
                 "expression" => {

@@ -29,11 +29,17 @@ completes each parse tree:
   loops       the benchmark with loops (the branch `loops` of
               process-impact-benchmarks, generated_processes_loops_regenerated)
               writes a loop as `(! X)`, a region run again with some
-              probability. A loop is a nature node for the alternation: it
-              takes the kind nature whatever the pending kind, the XOR below it
-              takes choice, and it carries the probability of running its
-              region again, drawn uniformly in (0, 1) as a nature draws its
-              own. The YAML writes it as `loop: p` with one region, `low`.
+              probability. A loop is a nature node, and the alternation is
+              forced through it: the XOR below it takes choice, and the kind
+              of every XOR with no decision node above it, the root of a
+              chain, is chosen so that the loops of its chain fall on nature
+              slots, by majority when they disagree, the one draw deciding a
+              tie or a chain with no loop (assign_kinds_with_loops). A loop
+              right under a nature all the same is a break, and the header
+              counts the breaks and the roots the loops fixed. A loop carries
+              the probability of running its region again, drawn uniformly in
+              (0, 1) as a nature draws its own. The YAML writes it as
+              `loop: p` with one region, `low`.
 
 One YAML file per process, named after the key it is indexed by, so that the
 grid of the compliance paper survives: nested, independent, process_number,
@@ -217,7 +223,8 @@ def assign_xor_kinds(node: Node, kind_here: str) -> None:
     ancestor, and two XOR nodes at the same XOR depth take the same kind,
     wherever they sit in the tree. Parallel and sequence nodes pass the pending
     kind through untouched, so the alternation is counted in XOR nodes and not
-    in tree depth.
+    in tree depth. A process with loops goes through assign_kinds_with_loops
+    instead, which calls this on nothing.
     """
     if node.kind == "task":
         return
@@ -234,6 +241,103 @@ def assign_xor_kinds(node: Node, kind_here: str) -> None:
     assign_xor_kinds(node.low, nxt)
     if node.high is not None:
         assign_xor_kinds(node.high, nxt)
+
+
+def opposite(kind: str) -> str:
+    return "nature" if kind == "choice" else "choice"
+
+
+def assign_kinds_with_loops(tree: Node, drawn_kind: str) -> tuple[int, int]:
+    """The alternation forced through the loops, a loop counting as a nature.
+
+    A loop is a nature node, so the XOR below it takes choice and the chain
+    of decisions under it is forced from there. What is free is the kind of
+    every XOR with no decision node above it, the root of a chain: it is
+    chosen so that the loops of its chain, those whose nearest decision
+    ancestor is an XOR of the chain, fall on a nature slot, each loop asking
+    its nearest XOR ancestor to be a choice; when the loops of one chain ask
+    for both parities the majority wins, and the drawn kind decides a tie or
+    a chain with no loop, as the one draw decides every root of a process
+    without loops. Every other XOR takes the opposite kind of its nearest
+    decision ancestor. A loop whose nearest decision ancestor is a nature all
+    the same, the loops of its chain having asked for the other parity, or
+    its chain being forced below another loop, is a break of the alternation;
+    the breaks are counted and written in the header. Returns the number of
+    chain roots fixed by their loops and the number of breaks.
+    """
+    forced_roots = 0
+
+    def kinds_below(node: Node, kind_here: str | None) -> None:
+        """Assign below a decision node whose kind is settled: `kind_here`
+        is the kind the next XOR takes, None at the top of a free chain."""
+        if node.kind == "task":
+            return
+        if node.kind == "xor":
+            node.xor_kind = kind_here
+            nxt = opposite(kind_here)
+        elif node.kind == "loop":
+            node.xor_kind = "nature"
+            nxt = "choice"
+        else:
+            nxt = kind_here
+        kinds_below(node.low, nxt)
+        if node.high is not None:
+            kinds_below(node.high, nxt)
+
+    def demands(node: Node, depth: int, out: list[int]) -> None:
+        """The parities the loops of a chain ask of its root: a loop whose
+        nearest decision ancestor is the XOR at decision depth `depth - 1`
+        of the chain asks that XOR to be a choice, which is the kind of the
+        root when the depth is even and the opposite otherwise. Below a loop
+        the chain is forced and asks nothing of the root."""
+        if node.kind == "task":
+            return
+        if node.kind == "xor":
+            demands(node.low, depth + 1, out)
+            demands(node.high, depth + 1, out)
+        elif node.kind == "loop":
+            if depth > 0:
+                out.append((depth - 1) % 2)
+        else:
+            demands(node.low, depth, out)
+            if node.high is not None:
+                demands(node.high, depth, out)
+
+    def roots(node: Node) -> None:
+        """Settle the free chains: an XOR with no decision node above it."""
+        nonlocal forced_roots
+        if node.kind == "task":
+            return
+        if node.kind == "xor":
+            asked: list[int] = []
+            demands(node, 0, asked)
+            if asked:
+                even = sum(1 for a in asked if a == 0)
+                odd = len(asked) - even
+                # parity 0: the root is a choice; parity 1: a nature; a tie
+                # goes to the drawn kind
+                kind = "choice" if even > odd else "nature" if odd > even else drawn_kind
+                forced_roots += 1
+            else:
+                kind = drawn_kind
+            kinds_below(node, kind)
+        elif node.kind == "loop":
+            kinds_below(node, None)
+        else:
+            roots(node.low)
+            if node.high is not None:
+                roots(node.high)
+
+    roots(tree)
+
+    def breaks(node: Node, above: str | None) -> int:
+        if node.kind == "task":
+            return 0
+        here = node.xor_kind if node.kind in ("xor", "loop") else above
+        broken = 1 if node.kind == "loop" and above == "nature" else 0
+        return broken + breaks(node.low, here) + (breaks(node.high, here) if node.high is not None else 0)
+
+    return forced_roots, breaks(tree, None)
 
 
 def draw_probabilities(node: Node, rng: random.Random) -> None:
@@ -347,6 +451,8 @@ def write_process(key: dict, expression: str, tree: Node, out_dir: Path) -> Path
     ]
     if key.get("loops"):
         lines.append(f"loops: {key['loops']}")
+        lines.append(f"forced_roots: {key['forced_roots']}")
+        lines.append(f"alternation_breaks: {key['alternation_breaks']}")
     lines += [
         (f"source: {key['source']}/" if key.get("loops") else "source: ")
         + f"generated_processes_full_{key['nested']}_{key['independent']}.txt"
@@ -388,7 +494,11 @@ def build(nested: int, independent: int, process_number: int, dimensions: int,
     tree = parse(expression)
     assign_ids(tree, [0])
     root_kind = rng.choice(["choice", "nature"])
-    assign_xor_kinds(tree, root_kind)
+    if loops_of(tree):
+        forced_roots, alternation_breaks = assign_kinds_with_loops(tree, root_kind)
+    else:
+        assign_xor_kinds(tree, root_kind)
+        forced_roots, alternation_breaks = 0, 0
     draw_probabilities(tree, rng)
     max_duration = attach_impacts_and_durations(tree, dimensions, mode, rng)
 
@@ -396,6 +506,7 @@ def build(nested: int, independent: int, process_number: int, dimensions: int,
                dimensions=dimensions, mode=mode, seed=seed, tasks=len(tasks_of(tree)),
                nodes=len(nodes_of(tree)), xor_root_kind=root_kind,
                max_duration=max_duration, loops=len(loops_of(tree)),
+               forced_roots=forced_roots, alternation_breaks=alternation_breaks,
                source=source.name if loops else "generated_processes")
     return write_process(key, expression, tree, out_dir)
 
