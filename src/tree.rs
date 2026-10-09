@@ -75,6 +75,9 @@ pub struct Meta {
     pub tasks: u32,
     pub nodes: u32,
     pub max_duration: u32,
+    /// The loops of the process, as the header of an instance of the
+    /// benchmark with loops counts them; zero when the header is silent.
+    pub loops: u32,
     pub xor_root_kind: String,
     pub source: String,
     pub expression: String,
@@ -570,6 +573,9 @@ impl<'a> Parser<'a> {
                 "tasks" => self.meta.tasks = num(self, value)? as u32,
                 "nodes" => self.meta.nodes = num(self, value)? as u32,
                 "max_duration" => self.meta.max_duration = num(self, value)? as u32,
+                // the loops of the process, written by the builder of the benchmark
+                // with loops and read for the record alone
+                "loops" => self.meta.loops = num(self, value)? as u32,
                 "xor_root_kind" => self.meta.xor_root_kind = value.to_string(),
                 "source" => self.meta.source = value.to_string(),
                 "expression" => {

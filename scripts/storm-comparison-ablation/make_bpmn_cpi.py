@@ -25,7 +25,15 @@ completes each parse tree:
               XOR the visit meets, and from there every XOR takes the opposite
               kind of its nearest XOR ancestor, so two XOR nodes at the same XOR
               depth agree wherever they sit. A nature node carries a probability
-              drawn uniformly in (0, 1), the probability of its low branch.
+              drawn uniformly in (0, 1), the probability of its low branch;
+  loops       the benchmark with loops (the branch `loops` of
+              process-impact-benchmarks, generated_processes_loops_regenerated)
+              writes a loop as `(! X)`, a region run again with some
+              probability. A loop is a nature node for the alternation: it
+              takes the kind nature whatever the pending kind, the XOR below it
+              takes choice, and it carries the probability of running its
+              region again, drawn uniformly in (0, 1) as a nature draws its
+              own. The YAML writes it as `loop: p` with one region, `low`.
 
 One YAML file per process, named after the key it is indexed by, so that the
 grid of the compliance paper survives: nested, independent, process_number,
@@ -37,6 +45,8 @@ Usage
                             --mode random --seed 20260815
     python make_bpmn_cpi.py --all --dimensions 2 3 4 5 6 7 8 9 10 \
                             --mode all --seed 20260815
+    python make_bpmn_cpi.py --all --dimensions 2 3 4 5 6 7 8 9 10 \
+                            --mode all --loops --out experiment/instances-loops
 
 Dimensions start at 2 on purpose: in dimension 1 the threshold question
 degenerates into a stochastic shortest path, which is not the problem this
@@ -59,6 +69,9 @@ from experiment_base import base
 
 BASE = base(HERE)  # HERE, or the experiment named by --replay-experiment
 BENCH = HERE / "process-impact-benchmarks"
+# the processes with loops: the branch `loops` of the same repository, checked
+# out beside the clone of main (git clone -b loops URL process-impact-benchmarks-loops)
+BENCH_LOOPS = HERE / "process-impact-benchmarks-loops"
 OUT = BASE / "bpmn-cpi-benchmarks"
 
 MODES = [
@@ -81,14 +94,14 @@ MODES = [
 
 @dataclass
 class Node:
-    kind: str  # task | xor | parallel | sequence
+    kind: str  # task | xor | parallel | sequence | loop
     node_id: int | None = None  # in-order identifier, see assign_ids
     name: str | None = None  # tasks only
     low: "Node | None" = None
-    high: "Node | None" = None
+    high: "Node | None" = None  # a loop has its region in low and no high
     # filled in by the completion pass
-    xor_kind: str | None = None  # choice | nature
-    probability: float | None = None  # nature only
+    xor_kind: str | None = None  # choice | nature; a loop is always nature
+    probability: float | None = None  # nature and loop only
     impact: list[float] = field(default_factory=list)  # tasks only
     duration: float | None = None  # tasks only
 
@@ -99,7 +112,7 @@ def tokenize(text: str) -> list[str]:
         c = text[i]
         if c.isspace():
             i += 1
-        elif c in "()^,":
+        elif c in "()^,!":
             out.append(c)
             i += 1
         elif text.startswith("||", i):
@@ -130,6 +143,14 @@ def parse(text: str) -> Node:
         if tok != "(":
             raise ValueError(f"expected ( or a task at token {pos}, found {tok!r}")
         pos += 1
+        if tokens[pos] == "!":
+            # a loop: one region, run again with a probability drawn later
+            pos += 1
+            region = expr()
+            if tokens[pos] != ")":
+                raise ValueError(f"expected ) at token {pos}, found {tokens[pos]!r}")
+            pos += 1
+            return Node(kind="loop", low=region)
         left = expr()
         op = tokens[pos]
         pos += 1
@@ -155,24 +176,32 @@ def assign_ids(node: Node, counter: list[int]) -> None:
     witness of least identifier, so carrying them in the file means the file and
     the semantics agree on which node a move acts at.
     """
-    if node.kind != "task":
+    if node.low is not None:
         assign_ids(node.low, counter)
     counter[0] += 1
     node.node_id = counter[0]
-    if node.kind != "task":
+    if node.high is not None:
         assign_ids(node.high, counter)
 
 
 def nodes_of(node: Node) -> list[Node]:
     if node.kind == "task":
         return [node]
-    return nodes_of(node.low) + [node] + nodes_of(node.high)
+    below = nodes_of(node.low) + [node]
+    return below + (nodes_of(node.high) if node.high is not None else [])
 
 
 def tasks_of(node: Node) -> list[Node]:
     if node.kind == "task":
         return [node]
-    return tasks_of(node.low) + tasks_of(node.high)
+    return tasks_of(node.low) + (tasks_of(node.high) if node.high is not None else [])
+
+
+def loops_of(node: Node) -> list[Node]:
+    if node.kind == "task":
+        return []
+    own = [node] if node.kind == "loop" else []
+    return loops_of(node.low) + own + (loops_of(node.high) if node.high is not None else [])
 
 
 # ---------------------------------------------------------------------------
@@ -195,20 +224,28 @@ def assign_xor_kinds(node: Node, kind_here: str) -> None:
     if node.kind == "xor":
         node.xor_kind = kind_here
         nxt = "nature" if kind_here == "choice" else "choice"
+    elif node.kind == "loop":
+        # a loop counts as a nature in the alternation: it is one whatever
+        # the pending kind, and the XOR below it takes choice
+        node.xor_kind = "nature"
+        nxt = "choice"
     else:
         nxt = kind_here
     assign_xor_kinds(node.low, nxt)
-    assign_xor_kinds(node.high, nxt)
+    if node.high is not None:
+        assign_xor_kinds(node.high, nxt)
 
 
 def draw_probabilities(node: Node, rng: random.Random) -> None:
-    """A nature node carries the probability of its low branch."""
+    """A nature node carries the probability of its low branch, a loop the
+    probability of running its region again, both drawn uniformly in (0, 1)."""
     if node.kind == "task":
         return
     if node.xor_kind == "nature":
         node.probability = rng.uniform(0.0, 1.0)
     draw_probabilities(node.low, rng)
-    draw_probabilities(node.high, rng)
+    if node.high is not None:
+        draw_probabilities(node.high, rng)
 
 
 def attach_impacts_and_durations(tree: Node, dimensions: int, mode: str,
@@ -239,6 +276,13 @@ def to_yaml(node: Node, indent: int = 0) -> list[str]:
             f"{pad}  duration: {node.duration}",
             f"{pad}  impact: [{', '.join(str(x) for x in node.impact)}]",
         ]
+    if node.kind == "loop":
+        return (
+            [f"{pad}- loop: {round(node.probability, 6)}"]
+            + [f"{pad}  id: {node.node_id}"]
+            + [f"{pad}  low:"]
+            + to_yaml(node.low, indent + 2)
+        )
     if node.kind == "xor" and node.xor_kind == "nature":
         head = [f"{pad}- nature: {round(node.probability, 6)}"]
     elif node.kind == "xor":
@@ -287,7 +331,12 @@ def write_process(key: dict, expression: str, tree: Node, out_dir: Path) -> Path
         f"nodes: {key['nodes']}",
         f"max_duration: {key['max_duration']}",
         f"xor_root_kind: {key['xor_root_kind']}",
-        f"source: generated_processes_full_{key['nested']}_{key['independent']}.txt"
+    ]
+    if key.get("loops"):
+        lines.append(f"loops: {key['loops']}")
+    lines += [
+        (f"source: {key['source']}/" if key.get("loops") else "source: ")
+        + f"generated_processes_full_{key['nested']}_{key['independent']}.txt"
         f" line {key['process_number']}",
         f"expression: \"{expression}\"",
         "tree:",
@@ -302,8 +351,9 @@ def write_process(key: dict, expression: str, tree: Node, out_dir: Path) -> Path
 
 
 def build(nested: int, independent: int, process_number: int, dimensions: int,
-          mode: str, seed: int, out_dir: Path) -> Path:
-    src = BENCH / "generated_processes" / f"generated_processes_full_{nested}_{independent}.txt"
+          mode: str, seed: int, out_dir: Path, loops: bool = False) -> Path:
+    source = (BENCH_LOOPS / "generated_processes_loops_regenerated") if loops else (BENCH / "generated_processes")
+    src = source / f"generated_processes_full_{nested}_{independent}.txt"
     lines = [l for l in src.read_text().splitlines() if l.strip()]
     expression = lines[process_number - 1]
 
@@ -332,7 +382,8 @@ def build(nested: int, independent: int, process_number: int, dimensions: int,
     key = dict(nested=nested, independent=independent, process_number=process_number,
                dimensions=dimensions, mode=mode, seed=seed, tasks=len(tasks_of(tree)),
                nodes=len(nodes_of(tree)), xor_root_kind=root_kind,
-               max_duration=max_duration)
+               max_duration=max_duration, loops=len(loops_of(tree)),
+               source=source.name if loops else "generated_processes")
     return write_process(key, expression, tree, out_dir)
 
 
@@ -349,6 +400,9 @@ def main() -> None:
                    help="the whole grid, nested and independent 1 to 10, ten processes each")
     p.add_argument("--seed", type=int, default=20260815)
     p.add_argument("--out", type=Path, default=OUT)
+    p.add_argument("--loops", action="store_true",
+                   help="the processes with loops, generated_processes_loops_regenerated of the "
+                        "branch loops of the benchmark, checked out as process-impact-benchmarks-loops")
     a = p.parse_args()
 
     nested = range(1, 11) if a.all else a.nested
@@ -368,7 +422,7 @@ def main() -> None:
                     for m in modes:
                         if m not in MODES:
                             p.error(f"unknown mode {m}, expected one of {', '.join(MODES)}")
-                        build(n, i, k, d, m, a.seed, a.out)
+                        build(n, i, k, d, m, a.seed, a.out, a.loops)
                         written += 1
     print(f"{written} trees written under {a.out}")
 
