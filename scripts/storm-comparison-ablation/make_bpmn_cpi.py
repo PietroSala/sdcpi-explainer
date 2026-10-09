@@ -267,6 +267,19 @@ def attach_impacts_and_durations(tree: Node, dimensions: int, mode: str,
 # ---------------------------------------------------------------------------
 
 
+def probability_text(p: float) -> str:
+    """A probability rounded to six decimals and kept inside (0, 1).
+
+    A draw within half a millionth of an end rounds to 0.0 or 1.0, which the
+    reader of an instance refuses, a nature node or a loop with a sure branch
+    being no such node: about one draw in a million, one file in a grid of
+    fifty thousand. The rounded value is moved to the nearest millionth
+    inside the interval; every other value is written as before.
+    """
+    q = round(p, 6)
+    return str(min(max(q, 0.000001), 0.999999))
+
+
 def to_yaml(node: Node, indent: int = 0) -> list[str]:
     pad = "  " * indent
     if node.kind == "task":
@@ -278,13 +291,13 @@ def to_yaml(node: Node, indent: int = 0) -> list[str]:
         ]
     if node.kind == "loop":
         return (
-            [f"{pad}- loop: {round(node.probability, 6)}"]
+            [f"{pad}- loop: {probability_text(node.probability)}"]
             + [f"{pad}  id: {node.node_id}"]
             + [f"{pad}  low:"]
             + to_yaml(node.low, indent + 2)
         )
     if node.kind == "xor" and node.xor_kind == "nature":
-        head = [f"{pad}- nature: {round(node.probability, 6)}"]
+        head = [f"{pad}- nature: {probability_text(node.probability)}"]
     elif node.kind == "xor":
         head = [f"{pad}- choice:"]
     else:
