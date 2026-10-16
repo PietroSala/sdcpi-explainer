@@ -1281,7 +1281,9 @@ fn cmd_pareto(args: &[String]) -> i32 {
             _ => return fail(&format!("--time-limit wants a positive number of seconds, found {t:?}")),
         },
     };
-    let onephase = args.flag("onephase").is_some();
+    // One phase is the default since 2026-10-16, as in sdcpi-parallel;
+    // --onephase 0 asks for the reconstruction from threshold queries.
+    let onephase = args.flag("onephase").map_or(true, |v| v != "0");
     let anytime = match args.flag("anytime") {
         None => None,
         Some(_) if !onephase => {
