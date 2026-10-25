@@ -1,6 +1,6 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.3
+**Pietro Sala** — Version 0.4
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
@@ -132,9 +132,13 @@ it, and no test speaks of it. The draw after the pass `j` of a loop exists
 for `j` below the bound only.
 
 The tree returned has the fewest tests, and among those the least depth,
-found by an exact search on the sets of histories within a budget of two
-hundred thousand sets; past the budget the search goes on greedily and the
-explanation says that it is not known to be the fewest. On the running
+found by an exact search on the sets of histories within a budget of sets,
+two hundred thousand by default and the option `--explain-budget N` of
+every command that explains; `--explain-budget inf` lifts the budget, the
+search is then exhaustive and every tree certified, at a cost that may be
+exponential in the rows of a choice. Past the budget the search goes on
+greedily and the explanation says that the tree is not known to be the
+fewest. On the running
 example, for the strategy that mends and then follows the redo:
 
     choice 4 (Swap or Mend): 1 history, 0 tests, the fewest
@@ -601,6 +605,7 @@ sdcpi optima  <instance>                     the exact least and greatest expect
 | `--tolerance f,...` | one fraction per component, of the range of the component between its two bounds at the initial state, the time first when it is in: a point within these of a point found is left out, and a partial strategy that cannot leave them, its lower bound raised by them being a budget known feasible, is closed. The frontier is then an approximation: every strategy is within the tolerances of a point found, reported if within the window and drawn grey otherwise, and no two points reported are within them of each other. At zero the frontier is exact; the one-phase search alone reads them. On the page the same choice is the block "Tolerances", one green slider per component, each shown with what its fraction is worth |
 | `--time 1` | the expected time as the component zero of the cost, in front of the impacts, which keep their order; a budget by name calls it `time`, or `expected time` when an impact of the instance is named `time` already. Every command that reads an instance takes it: `pareto` then takes the frontier over the time and the impacts, `bound` and `optima` report the time first, `to_prism` gives the model the reward `impact0`, paid `t_step` by every fast forward, and `to_objective` asks for it. The time is not one more impact: a task carries a zero there and the fast forward pays its advance once, so a parallel node lasts as long as the longer of its regions; its two bounds take the sum of the regions from above and the greater of the two lower bounds from below, and a task is bounded by what is left of its duration |
 | `--max-iter K` | the passes a loop makes in one activation before its exit is forced, 1 by default; an inner loop makes at most `K` per pass of the loop above it. Every command that reads an instance takes it, and `bound` alone takes `inf`, the process with its loops unbounded, whose two bounds are computed and whose search is refused; the page sends it as "Max iterations" |
+| `--explain-budget N` | the sets of histories the exact search for an explanation tree may solve before it goes on greedily, 200000 by default; `inf` lifts the budget, the search is then exhaustive and every tree certified |
 
 ## Output
 

@@ -1433,8 +1433,10 @@ fn frontier(body: &str, bench: &Bench) -> String {
 /// The explanation of one strategy: the process as the page has it, with
 /// the time and the bound on the passes of the search that found the
 /// strategy, and the decisions of the strategy, `history>action;...`, a
-/// history being its trail, identifiers joined by dots. The answer is one
-/// decision tree per choice node, on the draws alone.
+/// history being its trail, identifiers joined by dots; the field
+/// `explain_budget`, optional, is the budget of the exact search, a number
+/// of sets or `inf` for none, the default of the explainer when absent. The
+/// answer is one decision tree per choice node, on the draws alone.
 fn explain_of(body: &str, bench: &Bench) -> String {
     let prep = match prepare(body, bench) {
         Ok(p) => p,
@@ -1458,7 +1460,15 @@ fn explain_of(body: &str, bench: &Bench) -> String {
             _ => return err(&format!("{a:?} is no node of the process")),
         }
     }
-    match crate::explain::explain(&prep.tree, &decisions) {
+    let budget = match field(body, "explain_budget").as_deref().map(str::trim) {
+        None | Some("") => Some(crate::explain::DEFAULT_BUDGET),
+        Some("inf") | Some("none") => None,
+        Some(t) => match t.parse::<usize>() {
+            Ok(b) => Some(b),
+            Err(_) => return err(&format!("explain_budget wants a non-negative integer or inf, found {t:?}")),
+        },
+    };
+    match crate::explain::explain_within(&prep.tree, &decisions, budget) {
         Ok(e) => {
             let node = |id: u32| node_json(&prep.tree, id, &prep.labels);
             format!("{{\"explanations\": {}}}", crate::explain::render_json(&prep.tree, &e, &node))

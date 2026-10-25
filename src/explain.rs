@@ -36,8 +36,10 @@
 //! tree returned separates them with the fewest tests, and among the trees
 //! with the fewest tests the least depth. The search for it is exact, a
 //! memoised recursion on the sets of rows, as long as it stays within a
-//! budget of sets; past the budget it goes on greedily and the explanation
-//! says that it is not known to be minimal.
+//! budget of sets, two hundred thousand unless the command says otherwise
+//! (`--explain-budget N`, `inf` lifting the budget, so that the search is
+//! exhaustive and every tree certified); past the budget it goes on
+//! greedily and the explanation says that it is not known to be minimal.
 //!
 //! **The impacts in place of the draws.** The journal paper gives a second
 //! explainer, the current one, which reads at a choice the impacts paid so
@@ -202,8 +204,10 @@ pub struct Explanation {
     pub impacts: Vec<ImpactReading>,
 }
 
-/// The sets of rows the exact search may solve before it goes on greedily.
-const BUDGET: usize = 200_000;
+/// The sets of rows the exact search may solve before it goes on greedily,
+/// unless the command says otherwise: the budget of [`explain`], and the
+/// one `explain_within` takes as `Some`; `None` lifts it.
+pub const DEFAULT_BUDGET: usize = 200_000;
 
 /// The most available components the minimal sets are enumerated on in
 /// full, every subset being tried from the smallest.
@@ -219,9 +223,20 @@ struct Row {
 }
 
 /// The explanation of a strategy, one tree per choice node it decides, in
-/// the order of the identifiers. The decisions are the ones the search
-/// records, a trail and the child taken after it.
+/// the order of the identifiers, the exact search within its default
+/// budget. The decisions are the ones the search records, a trail and the
+/// child taken after it. The commands pass their own budget to
+/// `explain_within`; this entry point serves the tests and a library use.
+#[allow(dead_code)]
 pub fn explain(tree: &Tree, decisions: &[(Vec<u32>, u32)]) -> Result<Vec<Explanation>, String> {
+    explain_within(tree, decisions, Some(DEFAULT_BUDGET))
+}
+
+/// The explanation of a strategy with the budget of its exact search
+/// given: the sets of rows it may solve before it goes on greedily, or
+/// `None` for no budget, the search then exhaustive and every tree
+/// certified.
+pub fn explain_within(tree: &Tree, decisions: &[(Vec<u32>, u32)], budget: Option<usize>) -> Result<Vec<Explanation>, String> {
     let engine = Engine::new(tree);
     // per choice node, the rows: the draws as (feature, value) in the order
     // they were taken, the cost at the choice, and the child the strategy
@@ -262,8 +277,8 @@ pub fn explain(tree: &Tree, decisions: &[(Vec<u32>, u32)]) -> Result<Vec<Explana
     }
     let mut out = Vec::with_capacity(by_choice.len());
     for (v, rows) in by_choice {
-        let (tests, depth, minimal, root) = learn_draws(v, &rows)?;
-        let impacts = learn_impacts(tree, &rows);
+        let (tests, depth, minimal, root) = learn_draws(v, &rows, budget)?;
+        let impacts = learn_impacts(tree, &rows, budget);
         out.push(Explanation { choice: v, histories: rows.len(), tests, depth, minimal, root, impacts });
     }
     Ok(out)
@@ -290,6 +305,9 @@ struct Learner<'a> {
     /// A set of rows, sorted, to the tests and the depth of its tree and the
     /// statement at its root, `usize::MAX` at a leaf.
     memo: HashMap<Vec<u32>, (u32, u32, usize)>,
+    /// The sets the memo may hold before the search goes on greedily;
+    /// `None` for no budget.
+    budget: Option<usize>,
     /// False once the budget is passed: the search is greedy from there.
     exact: bool,
 }
@@ -338,7 +356,7 @@ impl Learner<'_> {
             }
         }
         candidates.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-        if self.memo.len() > BUDGET {
+        if self.budget.is_some_and(|b| self.memo.len() > b) {
             self.exact = false;
         }
         let mut best: (u32, u32, usize) = (u32::MAX, u32::MAX, usize::MAX);
@@ -378,10 +396,10 @@ impl Learner<'_> {
 
 /// The tree with the fewest tests, and among those the least depth, on
 /// these statements: the tree, its tests, its depth and whether the search
-/// stayed within its budget; `None` when no tree on the statements
-/// separates the rows.
-fn fewest(labels: &[u32], holds: &[Vec<bool>]) -> Option<(Dt, usize, usize, bool)> {
-    let mut learner = Learner { labels, holds, memo: HashMap::new(), exact: true };
+/// stayed within its budget, the sets it may solve exactly or `None` for
+/// no budget; `None` when no tree on the statements separates the rows.
+fn fewest(labels: &[u32], holds: &[Vec<bool>], budget: Option<usize>) -> Option<(Dt, usize, usize, bool)> {
+    let mut learner = Learner { labels, holds, memo: HashMap::new(), budget, exact: true };
     let all: Vec<u32> = (0..labels.len() as u32).collect();
     let (tests, depth) = learner.solve(all.clone());
     if tests == u32::MAX {
@@ -394,8 +412,9 @@ fn fewest(labels: &[u32], holds: &[Vec<bool>]) -> Option<(Dt, usize, usize, bool
 // -- the draws ---------------------------------------------------------------
 
 /// The tree on the draws of one choice node from its rows: its tests, its
-/// depth, whether it is known to be the fewest, and the tree.
-fn learn_draws(choice: u32, rows: &[Row]) -> Result<(usize, usize, bool, Node), String> {
+/// depth, whether it is known to be the fewest, and the tree; the budget
+/// is the one of the exact search.
+fn learn_draws(choice: u32, rows: &[Row], budget: Option<usize>) -> Result<(usize, usize, bool, Node), String> {
     // the draws in the order they are first met, a row after the other
     let mut index: HashMap<Feature, usize> = HashMap::new();
     let mut features: Vec<Feature> = Vec::new();
@@ -439,7 +458,7 @@ fn learn_draws(choice: u32, rows: &[Row]) -> Result<(usize, usize, bool, Node), 
         statements.extend(met.into_iter().map(|x| (f, x)));
     }
     let holds: Vec<Vec<bool>> = statements.iter().map(|&(f, x)| values.iter().map(|v| v[f] == x).collect()).collect();
-    let (root, tests, depth, minimal) = fewest(&labels, &holds)
+    let (root, tests, depth, minimal) = fewest(&labels, &holds, budget)
         .ok_or_else(|| format!("the histories of the choice {choice} are not told apart by their draws"))?;
     Ok((tests, depth, minimal, draws_node(&root, &statements, &features)))
 }
@@ -464,12 +483,12 @@ fn draws_node(dt: &Dt, statements: &[(usize, Value)], features: &[Feature]) -> N
 /// The readings of the impacts at one choice node: with the time in the
 /// cost, the reading that may read it and the one that leaves it out;
 /// otherwise the one reading on the impacts.
-fn learn_impacts(tree: &Tree, rows: &[Row]) -> Vec<ImpactReading> {
+fn learn_impacts(tree: &Tree, rows: &[Row], budget: Option<usize>) -> Vec<ImpactReading> {
     let k = tree.k;
     if tree.time {
-        vec![reading(rows, Clock::In, (0..k).collect()), reading(rows, Clock::Out, (1..k).collect())]
+        vec![reading(rows, Clock::In, (0..k).collect(), budget), reading(rows, Clock::Out, (1..k).collect(), budget)]
     } else {
-        vec![reading(rows, Clock::None, (0..k).collect())]
+        vec![reading(rows, Clock::None, (0..k).collect(), budget)]
     }
 }
 
@@ -505,8 +524,9 @@ fn separable(costs: &[Vec<BigRational>], labels: &[u32], comps: &[usize]) -> boo
     order.windows(2).all(|w| labels[w[0]] == labels[w[1]] || projection(&costs[w[0]], comps) != projection(&costs[w[1]], comps))
 }
 
-/// The impacts read at one choice node on these components.
-fn reading(rows: &[Row], clock: Clock, available: Vec<usize>) -> ImpactReading {
+/// The impacts read at one choice node on these components, the budget
+/// being the one of the exact search for every tree.
+fn reading(rows: &[Row], clock: Clock, available: Vec<usize>, budget: Option<usize>) -> ImpactReading {
     if let Some((a, b)) = clash(rows, &available) {
         return ImpactReading {
             clock,
@@ -525,16 +545,16 @@ fn reading(rows: &[Row], clock: Clock, available: Vec<usize>) -> ImpactReading {
     order.dedup_by(|a, b| projection(&rows[*a].cost, &available) == projection(&rows[*b].cost, &available));
     let costs: Vec<Vec<BigRational>> = order.iter().map(|&r| rows[r].cost.clone()).collect();
     let labels: Vec<u32> = order.iter().map(|&r| rows[r].action).collect();
-    let minimum = tree_on(&costs, &labels, &available);
+    let minimum = tree_on(&costs, &labels, &available, budget);
     let (sets, sets_complete) = minimal_sets(&costs, &labels, &available);
-    let sets: Vec<ImpactTree> = sets.iter().filter_map(|s| tree_on(&costs, &labels, s)).collect();
+    let sets: Vec<ImpactTree> = sets.iter().filter_map(|s| tree_on(&costs, &labels, s, budget)).collect();
     ImpactReading { clock, available, separable: true, clash: None, minimum, sets, sets_complete }
 }
 
 /// The tree with the fewest tests on these components: the statements are
 /// the cuts of every component at each of its values but the greatest,
 /// "at most this value".
-fn tree_on(costs: &[Vec<BigRational>], labels: &[u32], comps: &[usize]) -> Option<ImpactTree> {
+fn tree_on(costs: &[Vec<BigRational>], labels: &[u32], comps: &[usize], budget: Option<usize>) -> Option<ImpactTree> {
     let mut cuts: Vec<Cut> = Vec::new();
     for &c in comps {
         let mut vals: Vec<&BigRational> = costs.iter().map(|v| &v[c]).collect();
@@ -545,7 +565,7 @@ fn tree_on(costs: &[Vec<BigRational>], labels: &[u32], comps: &[usize]) -> Optio
         }
     }
     let holds: Vec<Vec<bool>> = cuts.iter().map(|q| costs.iter().map(|v| v[q.component] <= q.at_most).collect()).collect();
-    let (root, tests, depth, minimal) = fewest(labels, &holds)?;
+    let (root, tests, depth, minimal) = fewest(labels, &holds, budget)?;
     let mut components: Vec<usize> = Vec::new();
     let root = impact_node(&root, &cuts, &mut components);
     components.sort_unstable();

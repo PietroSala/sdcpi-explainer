@@ -155,8 +155,11 @@ options for explain
   is forced to at --max-iter is no draw and no test speaks of it. The
   strategy decides by the draws and by nothing else, its own earlier
   decisions being determined by them. The tree has the fewest tests, found
-  by an exact search within a budget, and says so when it is not known to;
-  --explain-json F writes the trees as JSON. On determine, --explain 1 does
+  by an exact search within a budget, and says so when it is not known to:
+  --explain-budget N is that budget, the sets of histories the exact
+  search may solve before it goes on greedily, 200000 by default, and
+  --explain-budget inf lifts it, the search being exhaustive and every
+  tree certified; --explain-json F writes the trees as JSON. On determine, --explain 1 does
   the same, and on pareto it explains the strategy of every point, in the
   report and in the JSON; the explanations are made after the search and
   outside --time-limit. --explain 0 turns it off.
@@ -275,7 +278,7 @@ pub(crate) struct Args {
 
 /// Every option some command takes: an option outside this list is a
 /// mistake, refused with its name, never ignored in silence.
-const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "bench-loops", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "explain", "explain-json", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
+const KNOWN_OPTIONS: &[&str] = &["B", "B-file", "ablation", "anytime", "arith", "bars", "bench", "bench-loops", "certificate", "clocks", "components", "detail", "encode-history", "epsilon", "explain", "explain-budget", "explain-json", "extract", "file", "impacts", "json", "max-iter", "max-states", "maximize", "names", "no-exact", "obdd-library", "onephase", "oracle", "out", "pareto", "port", "precision", "print-certificate", "print-size", "print-strategy", "regenerate", "saved", "seed", "selection", "steal", "time", "time-limit", "timeout", "tolerance", "tooltips", "window", "workers"];
 
 pub(crate) fn parse_args(args: &[String]) -> Result<Args, String> {
     let mut out = Args {
@@ -317,6 +320,21 @@ impl Args {
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
+    }
+}
+
+/// The budget of the exact search for an explanation tree, from
+/// `--explain-budget`: the sets of histories it may solve before it goes on
+/// greedily, the default of the explainer when the option is absent, and
+/// `None` for `inf`, which lifts the budget.
+fn explain_budget(args: &Args) -> Result<Option<usize>, String> {
+    match args.flag("explain-budget") {
+        None => Ok(Some(explain::DEFAULT_BUDGET)),
+        Some("inf") | Some("none") => Ok(None),
+        Some(t) => t
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| format!("--explain-budget wants a non-negative integer or inf, found {t:?}")),
     }
 }
 
@@ -992,10 +1010,14 @@ fn cmd_determine(args: &[String]) -> i32 {
     // the strategy explained, as decision trees on the draws
     let explain = switched_on(args.flag("explain")) || args.flag("explain-json").is_some();
     let explain_json = args.flag("explain-json");
+    let explain_budget = match explain_budget(&args) {
+        Ok(b) => b,
+        Err(e) => return fail(&e),
+    };
     match args.flag("arith") {
         None | Some("f64") => {
             let threshold: Vec<f64> = budget.iter().map(|b| b.value).collect();
-            run_determine(&tree, threshold, &opts, print_size, print_strategy, false, explain, explain_json)
+            run_determine(&tree, threshold, &opts, print_size, print_strategy, false, explain, explain_json, explain_budget)
         }
         Some("exact") => {
             let mut threshold: Vec<Exact> = Vec::with_capacity(budget.len());
@@ -1005,7 +1027,7 @@ fn cmd_determine(args: &[String]) -> i32 {
                     None => return fail(&format!("`{}` in B is not a decimal", b.text)),
                 }
             }
-            run_determine(&tree, threshold, &opts, print_size, print_strategy, true, explain, explain_json)
+            run_determine(&tree, threshold, &opts, print_size, print_strategy, true, explain, explain_json, explain_budget)
         }
         Some(v) => fail(&format!("--arith wants f64 or exact, found {v:?}")),
     }
@@ -1020,6 +1042,7 @@ fn run_determine<N: Num>(
     exact: bool,
     explain: bool,
     explain_json: Option<&str>,
+    explain_budget: Option<usize>,
 ) -> i32 {
     // recording costs nothing measurable, 1.7367 s against 1.7363 s on
     // an instance that searches for over a second, and without it the size
@@ -1115,7 +1138,7 @@ fn run_determine<N: Num>(
         if explain {
             // the strategy as one decision tree per choice node, on the
             // draws of nature alone
-            match explain::explain(tree, &s.decisions) {
+            match explain::explain_within(tree, &s.decisions, explain_budget) {
                 Ok(e) => {
                     let name = |id: u32| serve::name_of(tree, id);
                     println!(
@@ -1298,6 +1321,10 @@ fn cmd_pareto(args: &[String]) -> i32 {
     // every point with its strategy explained, a decision tree per choice
     // node on the draws alone
     let explain_points = switched_on(args.flag("explain"));
+    let explain_budget = match explain_budget(&args) {
+        Ok(b) => b,
+        Err(e) => return fail(&e),
+    };
     let started = Instant::now();
     let report = match pareto::frontier(
         &tree,
@@ -1433,7 +1460,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
     // report and for the JSON; they come after the search and outside its
     // time limit
     let explanations: Vec<Option<Result<Vec<explain::Explanation>, String>>> = if explain_points {
-        report.points.iter().map(|p| p.witness.as_ref().map(|w| explain::explain(&tree, &w.decisions))).collect()
+        report.points.iter().map(|p| p.witness.as_ref().map(|w| explain::explain_within(&tree, &w.decisions, explain_budget))).collect()
     } else {
         Vec::new()
     };
