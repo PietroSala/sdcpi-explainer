@@ -1,6 +1,6 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.4
+**Pietro Sala** — Version 0.5
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
@@ -11,7 +11,7 @@ checker and with three ablated configurations of its own search,
 rebuildable from nothing, its own `README.md` walking the stages; the
 library asks nothing of the scripts, and the scripts ask only the built
 library. The recorded reference campaign ships as a split archive that
-`setup.py` unpacks; the repository is private for now.
+`setup.py` unpacks.
 
 **Strategy Determination for BPMN+CPI**, a command-line tool. Given a business
 process with decisions, chance and multi-dimensional costs, it answers one
