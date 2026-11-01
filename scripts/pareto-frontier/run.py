@@ -48,7 +48,12 @@ and explains its candidates, and it is killed only past the budget and a
 grace for the explanations. The record keeps, beside the fields of the
 search, the seconds of the explanations and a summary of them, point by
 point and choice by choice; the report of the tool, trees included, is kept
-beside the record, compressed.
+beside the record, compressed, and so is the buffer. When the tool ends by
+itself the frontier of the record is the one it reports and explains, and
+the buffer is not read by the driver, the frontier at the budget and the
+anytime curve costing minutes on a buffer of thousands of apexes; both can
+be read from the buffer later. A run killed past the grace is read from its
+buffer, without the curve.
 """
 
 from __future__ import annotations
@@ -468,15 +473,29 @@ class Campaign:
                           stdout_tail=(so + se)[-2000:], note="no buffer",
                           points_found=0)
             return record
-        try:
-            report = anytime_buffer.Buffer(buf).report(self.timeout)
-        except Exception as e:              # a buffer of no use must not stop the sweep
-            record.update(tool="sdcpi", status="failed", seconds=wall, command=cmd,
-                          note=f"buffer unreadable: {e}")
-            return record
-        points = report.pop("points")
-        record.update(report)
-        record["points"] = [{"value": v} for v in points]
+        if explaining and "explanations" in record:
+            # The tool ended by itself, at the end of its search or stopped by
+            # the budget it was given as its time limit: the points it reports,
+            # the ones it explained, are the frontier of the record, and the
+            # buffer is kept beside the record without being read here, the
+            # frontier at the budget and the anytime curve costing minutes on a
+            # buffer of thousands of apexes; both can be read from it later.
+            record["points"] = [{"value": p.get("value")} for p in record.get("points", [])]
+            record["points_found"] = len(record["points"])
+            if record.get("status") not in ("complete", "failed"):
+                record["status"] = "truncated"
+            record["buffer_reduced"] = False
+        else:
+            try:
+                # the anytime curve is left out of a run with explanations
+                report = anytime_buffer.Buffer(buf).report(self.timeout, curve=not explaining)
+            except Exception as e:          # a buffer of no use must not stop the sweep
+                record.update(tool="sdcpi", status="failed", seconds=wall, command=cmd,
+                              note=f"buffer unreadable: {e}")
+                return record
+            points = report.pop("points")
+            record.update(report)
+            record["points"] = [{"value": v} for v in points]
         record.update(tool="sdcpi", wall_seconds=wall, command=cmd, killed=killed,
                       buffer=str(buf.name) + ".gz")
         # a run cut at the budget has no time of its own to report, the tool
