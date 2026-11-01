@@ -38,6 +38,17 @@ mode and a bound; the rule of the dead cells holds per bound, and a
 configuration that timed out on every instance of a cell at one bound is
 dead at the greater bounds of that cell too, more passes making nothing
 easier.
+
+The configurations `explain-<ablation>-w<workers>` run the same search with
+every point of the frontier explained (--explain 1): a decision tree per
+choice node on the draws, and on the cost when a function of the cost
+exists, every minimal set of components with its tree. The tool is given the
+budget as its time limit, so that a search the budget cuts stops by itself
+and explains its candidates, and it is killed only past the budget and a
+grace for the explanations. The record keeps, beside the fields of the
+search, the seconds of the explanations and a summary of them, point by
+point and choice by choice; the report of the tool, trees included, is kept
+beside the record, compressed.
 """
 
 from __future__ import annotations
@@ -91,11 +102,21 @@ CONFS: list[tuple[str, list[str]]] = [("storm", [])] + [
     for a in ABLATIONS
     for w in WORKERS
 ]
+# The configurations with the explanations, added on 2026-11-01 for the
+# evaluation of the explainer; they run only when --only names them.
+CONFS += [
+    (f"explain-{a}-w{w}", ["--onephase", "1", "--ablation", a, "--workers", str(w), "--explain", "1"])
+    for a in ABLATIONS
+    for w in WORKERS
+]
 BASELINE = "onephase-both-w1"
 UNDONE = ("timeout", "killed", "skipped", "truncated")
 # how long past the budget the process is left to run before it is killed,
 # so that the buffer certainly reaches the budget itself
 SLACK = 5.0
+# how long past the budget a run with explanations is left to explain the
+# points it found before it is killed
+EXPLAIN_GRACE = 120.0
 
 
 # The child in flight, so that a signal to the driver takes the child with
@@ -127,6 +148,45 @@ def call(cmd: list[str], timeout: float) -> tuple[int | None, str, str, bool]:
         return None, out or "", err or "", True
     finally:
         _child = None
+
+
+def explanation_summary(points: list) -> list:
+    """The explanations of the points of a report of the tool, one entry per
+    point in the order of the report: for every choice it explains, the rows
+    of its table, the tests, the depth and the certificate of the tree on the
+    draws, and the reading on the cost, whether a function of the cost
+    exists, the tree on every component and the minimal sets, each as its
+    size, its tests and its certificate. The values of the points are in the
+    report, kept beside the record."""
+    out = []
+    for p in points:
+        ex = p.get("explanation")
+        if ex is None:
+            out.append({"error": p.get("explanation_error", "no witness")})
+            continue
+        choices = []
+        for e in ex:
+            readings = (e.get("impacts") or {}).get("readings") or [{}]
+            reading = readings[0]
+            minimum = reading.get("minimum")
+            choices.append({
+                "choice": e["choice"]["id"],
+                "rows": e["histories"],
+                "tests": e["tests"],
+                "depth": e["depth"],
+                "certified": e["minimal"],
+                "cost": {
+                    "suffices": reading.get("separable"),
+                    "tests": minimum["tests"] if minimum else None,
+                    "depth": minimum["depth"] if minimum else None,
+                    "certified": minimum["minimal"] if minimum else None,
+                    "components": len(minimum["components"]) if minimum else None,
+                    "sets": [[len(x["components"]), x["tests"], x["minimal"]] for x in reading.get("sets") or []],
+                    "sets_complete": reading.get("sets_complete"),
+                },
+            })
+        out.append({"choices": choices})
+    return out
 
 
 def key_of(n: int, i: int, k: int, d: int, m: str, max_iter: int | None = None) -> str:
@@ -382,14 +442,25 @@ class Campaign:
         out = self.results / key / f"{conf}.r{self.round}.pareto.json"
         buf = self.results / key / f"{conf}.r{self.round}.buffer.jsonl"
         out.parent.mkdir(parents=True, exist_ok=True)
+        explaining = "--explain" in extra
         cmd = [str(SDCPI), "pareto", str(yaml), "--anytime", str(buf),
                "--json", str(out)] + extra
+        if explaining:
+            # the search stops by itself at the budget, and the explanations
+            # have their grace after it
+            cmd += ["--time-limit", str(self.timeout)]
         started = time.monotonic()
-        code, so, se, killed = call(cmd, self.timeout + SLACK)
+        code, so, se, killed = call(cmd, self.timeout + SLACK + (EXPLAIN_GRACE if explaining else 0.0))
         wall = time.monotonic() - started
         record: dict = {}
         if out.exists():                    # the search ended on its own
-            record = json.loads(out.read_text())
+            text = out.read_text()
+            record = json.loads(text)
+            if explaining:
+                record["explanations"] = explanation_summary(record.get("points", []))
+                with gzip.open(str(out) + ".gz", "wt", compresslevel=9) as gz:
+                    gz.write(text)
+                record["report"] = out.name + ".gz"
             out.unlink()
         if not buf.exists():
             record.update(tool="sdcpi", status="failed", seconds=wall, command=cmd,
