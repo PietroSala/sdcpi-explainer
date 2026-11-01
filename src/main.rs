@@ -1459,11 +1459,18 @@ fn cmd_pareto(args: &[String]) -> i32 {
     // the explanations, one per point with a witness, made once for the
     // report and for the JSON; they come after the search and outside its
     // time limit
+    let explain_started = Instant::now();
     let explanations: Vec<Option<Result<Vec<explain::Explanation>, String>>> = if explain_points {
         report.points.iter().map(|p| p.witness.as_ref().map(|w| explain::explain_within(&tree, &w.decisions, explain_budget))).collect()
     } else {
         Vec::new()
     };
+    // the time of the explanations alone, apart from the seconds of the
+    // search, which stop before them
+    let explain_time = if explain_points { Some(explain_started.elapsed()) } else { None };
+    if let Some(t) = explain_time {
+        println!("explain seconds {:.6}", t.as_secs_f64());
+    }
     for (i, p) in report.points.iter().enumerate() {
         let shown = tree.shown_vec(&p.value);
         println!("point {:<9}{}", i + 1, dec(&shown));
@@ -1514,7 +1521,7 @@ fn cmd_pareto(args: &[String]) -> i32 {
         }
     }
     if let Some(path) = args.flag("json") {
-        let text = json_report(&tree, &report, elapsed, print_strategy, &explanations);
+        let text = json_report(&tree, &report, elapsed, print_strategy, &explanations, explain_time);
         if let Err(e) = std::fs::write(path, text) {
             return fail(&format!("{path}: {e}"));
         }
@@ -1534,6 +1541,7 @@ fn json_report(
     elapsed: Duration,
     decisions: bool,
     explanations: &[Option<Result<Vec<explain::Explanation>, String>>],
+    explain_time: Option<Duration>,
 ) -> String {
     fn esc(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
@@ -1615,6 +1623,9 @@ fn json_report(
     o.push_str(&format!("  \"extract_seconds\": {:.6},\n", r.extract_time.as_secs_f64()));
     o.push_str(&format!("  \"cone_seconds\": {:.6},\n", r.cone_time.as_secs_f64()));
     o.push_str(&format!("  \"merge_seconds\": {:.6},\n", r.merge_time.as_secs_f64()));
+    if let Some(t) = explain_time {
+        o.push_str(&format!("  \"explain_seconds\": {:.6},\n", t.as_secs_f64()));
+    }
     o.push_str(&format!("  \"obdd_peak_size\": {},\n", r.max_size));
     o.push_str(&format!("  \"expanded\": {},\n", r.search.expanded));
     o.push_str(&format!("  \"choice_states\": {},\n", r.search.choice_states));
