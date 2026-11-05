@@ -426,6 +426,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let LAST = null;
+let LOADS = 0;        // the last load asked for: an answer to an earlier one is dropped
+let GENERATION = 0;   // the changes of the text: a search started before one is stopped
 
 function fill(id, from, to, chosen) {
   const s = $(id);
@@ -634,8 +636,11 @@ async function deleteSaved(name) {
     if (d.error) { $('savenote').textContent = d.error; }
     else {
       $('savenote').textContent = `Deleted ${d.name}.`;
-      if (DOC.loaded === d.name) { DOC.loaded = null; DOC.baseline = null; refreshState(); }
-      refreshDiagram();   // a reference to the deleted name now fails, and says so
+      if (DOC.loaded === d.name) { DOC.loaded = null; DOC.baseline = null; DOC.adopted = false; refreshState(); }
+      // a reference to the deleted name now fails and says so, or reads the
+      // example of that name: either way the process in the box is another one
+      if ($('proc').value.includes('@')) invalidate();
+      refreshDiagram();
     }
   } catch (e) { $('savenote').textContent = String(e); }
   refreshSaved();
@@ -807,9 +812,22 @@ $('subopen').addEventListener('click', () => { SUBS.forEach(s => EXPANDED.add(s.
 $('subclose').addEventListener('click', () => { EXPANDED.clear(); refreshDiagram(); });
 
 // A frontier belongs to the text it was computed from: when the text changes,
-// by a keystroke or a load, the results of the text before leave the page.
+// by a keystroke or a load, the results of the text before leave the page, the
+// error of a search among them, and a search of that text still running goes
+// with them, its answer being of no use and able only to come back over the
+// text that took its place.
 function invalidate() {
-  if (LAST === null) return;
+  GENERATION++;
+  if (LIVE) {
+    const gone = LIVE;
+    LIVE = null;
+    clearTimeout(gone.timer);
+    fetch('/api/stop', { method: 'POST', body: new URLSearchParams({ id: gone.id }) }).catch(() => {});
+    $('go').disabled = false;
+  }
+  $('out').classList.remove('live');
+  $('out').style.minHeight = '';
+  if (LAST === null && !$('out').querySelector('.err, .starting')) return;
   LAST = null; SELECTED = null;
   $('out').innerHTML = '<p class="status">The process changed; press the button to compute its frontier.</p>';
 }
@@ -918,7 +936,7 @@ $('f').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (LIVE) { clearTimeout(LIVE.timer); try { await fetch('/api/stop', { method: 'POST', body: new URLSearchParams({ id: LIVE.id }) }); } catch (err) {} LIVE = null; }
   $('go').disabled = true;
-  $('out').innerHTML = '<p class="status">Starting…</p>';
+  $('out').innerHTML = '<p class="status starting">Starting…</p>';
   const body = new URLSearchParams({
     process: $('proc').value,
     name: DOC.name || '',
@@ -931,9 +949,17 @@ $('f').addEventListener('submit', async (e) => {
     maximize: dirsField(),
     tolerance: tolField(),
   });
+  const generation = GENERATION;
   try {
     const r = await fetch('/api/start', { method: 'POST', body });
     const d = await r.json();
+    // the text changed while the search was starting: it is the search of the
+    // text before, and it goes at once
+    if (generation !== GENERATION) {
+      if (d.id) fetch('/api/stop', { method: 'POST', body: new URLSearchParams({ id: d.id }) }).catch(() => {});
+      $('go').disabled = false;
+      return;
+    }
     if (d.error) { $('out').innerHTML = '<div class="err"></div>';
                    $('out').firstChild.textContent = d.error; $('go').disabled = false; return; }
     LIVE = { id: d.id, playing: true, timer: null };
@@ -942,8 +968,10 @@ $('f').addEventListener('submit', async (e) => {
     $('go').disabled = false;
     poll();
   } catch (err) {
-    $('out').innerHTML = '<div class="err"></div>';
-    $('out').firstChild.textContent = String(err);
+    if (generation === GENERATION) {
+      $('out').innerHTML = '<div class="err"></div>';
+      $('out').firstChild.textContent = String(err);
+    }
     $('go').disabled = false;
   }
 });
