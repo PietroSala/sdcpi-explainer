@@ -1239,6 +1239,13 @@ fn prepare(body: &str, bench: &Bench) -> Result<Prepared, String> {
         Some(t) if !t.trim().is_empty() => t,
         _ => return Err("no process was given".to_string()),
     };
+    // the body of an explanation may be far larger than the others for its
+    // decisions alone: the other fields are held to the cap of every route
+    for name in ["process", "window", "tolerance"] {
+        if field(body, name).map_or(false, |v| v.len() > MAX_BODY) {
+            return Err(format!("the field {name} is longer than the {MAX_BODY} bytes accepted"));
+        }
+    }
     // the workers between 1 and 64 whatever the field says, and the limit
     // a finite number of seconds: the page is one client of many
     let workers_n: usize = field(body, "workers").and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(1).clamp(1, 64);
@@ -1269,7 +1276,8 @@ fn prepare(body: &str, bench: &Bench) -> Result<Prepared, String> {
     // the window on the expected values: `name=lo,hi;...` by the names of
     // the components, a name the process does not have ignored and a
     // component not named left open, or `lo,hi;lo,hi;...` by position, one
-    // per component; either side empty for the bound at the initial state
+    // per component and never mixed with a part by name; either side empty
+    // for the bound at the initial state
     let window = match field(body, "window").filter(|w| !w.trim().is_empty()) {
         None => None,
         Some(w) => {
@@ -1285,6 +1293,7 @@ fn prepare(body: &str, bench: &Bench) -> Result<Prepared, String> {
                         Some(c) => (c, r),
                         None => continue,
                     },
+                    None if named => return Err(format!("the part {part:?} of the window has no name, and the others do")),
                     None => (pos, *part),
                 };
                 let mut it = range.splitn(2, ',');
@@ -1312,8 +1321,8 @@ fn prepare(body: &str, bench: &Bench) -> Result<Prepared, String> {
 
     // the tolerances, `name=f;...` by the names of the components, a name
     // the process does not have ignored and a component not named at zero,
-    // or `f;f;...` by position; fractions of the range of every component,
-    // nothing when every one is zero
+    // or `f;f;...` by position and never mixed with a part by name; fractions
+    // of the range of every component, nothing when every one is zero
     let tolerance: Option<Vec<num_rational::BigRational>> = match field(body, "tolerance").filter(|t| !t.trim().is_empty()) {
         None => None,
         Some(t) => {
@@ -1331,6 +1340,7 @@ fn prepare(body: &str, bench: &Bench) -> Result<Prepared, String> {
                         Some(c) => (c, f),
                         None => continue,
                     },
+                    None if named => return Err(format!("the part {part:?} of the tolerances has no name, and the others do")),
                     None => (pos, *part),
                 };
                 let f = match num::parse_rational(text.trim()) {
