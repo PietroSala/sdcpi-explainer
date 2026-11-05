@@ -1046,10 +1046,16 @@ fn search_in<'a, N: Num>(tree: &'a Tree, records: &'a Records<'a, N>, cfg: Confi
     // stacks empty and sleep until something reaches them around the ring.
     shared.stacks[0].push(root);
 
+    // the workers recurse over the tree, through the bounds of every state
+    // they meet, as far as the parser lets it go: the stack a connection of
+    // the page gets, and not the two megabytes a thread gets by default
     std::thread::scope(|scope| {
         for w in 0..workers {
             let shared = &shared;
-            scope.spawn(move || work(shared, w));
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn_scoped(scope, move || work(shared, w))
+                .expect("a worker of the search could not start");
         }
     });
 
