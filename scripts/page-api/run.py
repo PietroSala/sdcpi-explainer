@@ -25,6 +25,17 @@ What is checked, route by route:
               another; the keys out of the grid, the bad numbers, a missing
               field and an unknown mode refused with an error. Only keys on
               disk are asked for, so that the generator never writes.
+  examples    the list of the panel "Examples", the ten processes of the
+              paper and of the thesis with their group and their settings,
+              typed, and no text in it; every example by its id, its text
+              the file under `examples/`, drawing its diagram and giving,
+              with its settings, the frontier its document reports, 1937
+              points for the release; an unknown id, a missing one and a
+              path are errors; the release and the stroke drawn, bounded,
+              searched and explained on an empty store through the built-in
+              subprocess; a save closing a cycle through an example refused;
+              a saved process named `tests` shadowing the built-in one until
+              it is deleted.
   svg         a valid text gives an SVG with one task box per task, with each
               of the switches detail, tooltips, bars, clocks, names on and
               off; `hide` and `show` select the bars; an invalid text, an
@@ -123,7 +134,41 @@ TEXT_SLOW = """( ( ( (T1, 2, {impact0: 0.954507, impact1: 0.059873, impact2: 0.7
      , ( ( (T19, 1, {impact0: 0.890546, impact1: 0.869393, impact2: 0.856733, impact3: 0.373456, impact4: 0.609533}) ^ (T20, 1, {impact0: 0.703268, impact1: 0.945377, impact2: 0.43249, impact3: 0.570204, impact4: 0.871707}) )
        ^[0.728244] (T21, 3, {impact0: 0.426879, impact1: 0.394883, impact2: 0.790622, impact3: 0.756004, impact4: 0.406662}) ) ) )"""
 
+# the examples of the panel, as the list of the page must give them: the id,
+# the group, the file of the text under examples/, the three settings, and
+# the number of points of the frontier computed with them, the outcome the
+# paper and the thesis report
+EXAMPLES = [
+    ("release", "paper", "release.cpi", False, 2, [], 1937),
+    ("tests", "paper", "tests.cpi", False, 2, [], 2),
+    ("coin", "paper", "coin.cpi", False, 1, [], 3),
+    ("winery", "thesis", "winery.cpi", False, 1, ["points"], 7),
+    ("stroke", "thesis", "stroke.cpi", True, 1, [], 12),
+    ("transport", "thesis", "transport.cpi", True, 1, [], 2),
+    ("release-nested", "thesis", "release-nested.cpi", True, 2, [], 1024),
+    ("line", "thesis", "line-thesis.cpi", False, 1, [], 4),
+    ("loop-choice", "thesis", "loop-choice.cpi", False, 2, [], 4),
+    ("quantile", "thesis", "quantile.cpi", False, 1, [], 1),
+]
+
+# the points of the small frontiers, in the order of the names of the answer
+EXAMPLE_POINTS = {
+    "coin": ["1 11", "6 6", "11 1"],
+    "winery": ["5150 22/5", "5390 5", "5710 29/5", "5950 32/5", "7190 7", "7510 39/5", "7750 42/5"],
+    "line": ["587/5 43/5", "607/5 41/5", "667/5 7", "687/5 33/5"],
+    "loop-choice": ["3/2 15", "2 12", "5/2 9", "3 6"],
+    "quantile": ["2 5/2"],
+}
+
+# the folder of the examples, beside the scripts
+EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "examples")
+
 TASK_RE = re.compile(r"\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*\d+")
+
+
+def code_of(text):
+    """A text without its comments, which the parser never reads."""
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
 
 
 def tasks_in(text):
@@ -474,6 +519,139 @@ def section_bench(L, c, args, hello):
     for label, fields in bad:
         d = c.post("/api/bench", fields)
         L.check(f"bench refuses {label}", isinstance(d.get("error"), str) and d["error"] and "process" not in d, describe("/api/bench", fields), d)
+
+
+def section_examples(L, c, args, work):
+    L.start("examples")
+    if args.no_loops:
+        L.skip("examples", "the mirror without loops has no panel of examples")
+        return
+    status, text = c.status_of("/api/examples")
+    try:
+        d = json.loads(text)
+    except json.JSONDecodeError:
+        d = None
+    listed = d.get("examples") if isinstance(d, dict) else None
+    if not L.check("the list is a JSON object with an examples array", status == 200 and isinstance(listed, list), "GET /api/examples", f"{status} {clip(text, 300)}"):
+        return
+    L.check("the list holds the ten examples in the order of the documents", [e.get("id") for e in listed] == [x[0] for x in EXAMPLES], "GET /api/examples", [e.get("id") for e in listed])
+    L.check("the paper comes first, then the thesis", [e.get("group") for e in listed] == [x[1] for x in EXAMPLES], "GET /api/examples", [e.get("group") for e in listed])
+    L.check("every example has a title, a source and a note", all(isinstance(e.get(k), str) and e[k].strip() for e in listed for k in ("title", "source", "note")), "GET /api/examples", clip(listed, 400))
+    L.check("the list carries no text", all("process" not in e and "text" not in e for e in listed), "GET /api/examples", [sorted(e) for e in listed][:2])
+    typed = lambda e: (isinstance(e.get("time"), bool) and isinstance(e.get("max_iter"), int) and not isinstance(e.get("max_iter"), bool) and e["max_iter"] >= 1
+                       and isinstance(e.get("maximize"), list) and all(isinstance(n, str) for n in e["maximize"]))
+    L.check("the settings of the list are present and typed", all(typed(e) for e in listed), "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
+    L.check("the settings of the list are those of the documents", [(e.get("time"), e.get("max_iter"), e.get("maximize")) for e in listed] == [(x[3], x[4], x[5]) for x in EXAMPLES], "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
+    saved_before = json.loads(c.get("/api/saved")[1]).get("saved")
+    L.check("the store is empty while the examples are read", saved_before == [], "GET /api/saved", saved_before)
+    texts = {}
+    for (eid, group, fname, time_on, k, maximize, n_points), row in zip(EXAMPLES, listed):
+        f = {"id": eid}
+        e = c.post("/api/example", f)
+        ok = e.get("name") == eid and isinstance(e.get("process"), str) and e["process"].strip() != ""
+        if not L.check(f"example {eid} answers its name and a text", ok, describe("/api/example", f), clip(e, 300)):
+            continue
+        text = e["process"]
+        texts[eid] = text
+        L.check(f"example {eid} carries its settings, typed, as the list has them", typed(e) and all(e.get(key) == row.get(key) for key in ("time", "max_iter", "maximize")), describe("/api/example", f), {key: e.get(key) for key in ("time", "max_iter", "maximize")})
+        L.check(f"example {eid} opens with a comment of one to three lines", 1 <= len([1 for line in text.splitlines()[:4] if line.startswith("#")]) <= 3 and text.startswith("#"), describe("/api/example", f), text[:200])
+        path = os.path.join(EXAMPLES_DIR, fname)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                L.check(f"example {eid} is the file examples/{fname}", fh.read() == text, describe("/api/example", f), text[:200])
+        else:
+            L.skip(f"example {eid} against its file", f"no {path}")
+        # the diagram: one box per task of the text, one collapsed box per reference
+        code = code_of(text)
+        fs = {"process": text, "name": eid}
+        svg = c.post("/api/svg", fs)
+        boxes, subs = svg.get("svg", "").count('class="task"'), svg.get("svg", "").count('class="sub collapsed"')
+        L.check(f"example {eid} draws its diagram", "svg" in svg and boxes == tasks_in(code) > 0 and subs == code.count("@"), describe("/api/svg", {"process": "(the text)", "name": eid}), svg.get("error") or {"boxes": boxes, "tasks": tasks_in(code), "subs": subs, "references": code.count("@")})
+        # the frontier with the settings of the document
+        ff = {"process": text, "name": eid, "workers": "1", "limit": "120", "time": "1" if time_on else "0", "max_iter": str(k), "maximize": ",".join(maximize)}
+        fr = c.post("/api/frontier", ff, timeout=200)
+        L.check(f"example {eid} has a frontier of {n_points} points with its settings", fr.get("status") == "complete" and len(fr.get("points", [])) == n_points, describe("/api/frontier", dict(ff, process="(the text)")), fr.get("error") or {"status": fr.get("status"), "points": len(fr.get("points", [])), "seconds": fr.get("seconds")})
+        L.check(f"the frontier of {eid} carries the time and the directions of its settings", fr.get("time") is time_on and fr.get("max_iter") == k and fr.get("maximized") == [n in maximize for n in fr.get("names", [])], describe("/api/frontier", dict(ff, process="(the text)")), {key: fr.get(key) for key in ("time", "max_iter", "names", "maximized")})
+        if eid in EXAMPLE_POINTS and "points" in fr:
+            want = {frac_tuple(p.split()) for p in EXAMPLE_POINTS[eid]}
+            L.check(f"the frontier of {eid} is the one of its document", points_set(fr["points"]) == want, describe("/api/frontier", dict(ff, process="(the text)")), [p["value"] for p in fr["points"]])
+    # the ids that are no example
+    for label, f in [("an unknown id", {"id": "no_such_example"}), ("an id that is a path", {"id": "../examples/release.cpi"}), ("an empty id", {"id": "  "}), ("no id", {})]:
+        e = c.post("/api/example", f)
+        L.check(f"example refuses {label}", isinstance(e.get("error"), str) and e["error"] and "process" not in e, describe("/api/example", f), e)
+    status, body = c.status_of("/api/example", "GET")
+    L.check("GET on /api/example answers 404", status == 404, "GET /api/example", f"{status} {clip(body, 100)}")
+    status, body = c.status_of("/api/examples", "POST", data=b"id=release")
+    L.check("POST on /api/examples answers 404", status == 404, "POST /api/examples", f"{status} {clip(body, 100)}")
+    if "release" not in texts or "stroke" not in texts:
+        return
+    # the release and the stroke on an empty store: the reference is the
+    # built-in subprocess, in the drawing, the bounds, the two searches and
+    # the explanations
+    rel, stroke = texts["release"], texts["stroke"]
+    f = {"process": rel, "name": "release", "expand": "11"}
+    d = c.post("/api/svg", f)
+    svg = d.get("svg", "")
+    L.check("the release names its subprocess tests, shown as Tests", [(x.get("name"), x.get("shown")) for x in d.get("subs", [])] == [("tests", "Tests")], describe("/api/svg", dict(f, process="(the release)")), d.get("error") or d.get("subs"))
+    L.check("the release expanded draws the tasks of the built-in tests", all(f">{t}<" in svg for t in ("Unit", "Signoff", "Patch", "Refactor")) and svg.count('class="sub expanded"') == 1, describe("/api/svg", dict(f, process="(the release)")), d.get("error") or re.findall(r'class="name"[^>]*>([^<]*)<', svg))
+    f = {"process": stroke, "name": "stroke"}
+    d = c.post("/api/svg", f)
+    L.check("the stroke names its subprocess transport twice, shown as Pickup and Transfer", [(x.get("name"), x.get("shown")) for x in d.get("subs", [])] == [("transport", "Pickup"), ("transport", "Transfer")], describe("/api/svg", dict(f, process="(the stroke)")), d.get("error") or d.get("subs"))
+    labels = [x.get("label") for x in d.get("subs", [])]
+    d = c.post("/api/svg", {"process": stroke, "name": "stroke", "expand": ",".join(labels)})
+    svg = d.get("svg", "")
+    L.check("the stroke expanded draws the tasks of the built-in transport twice", svg.count(">Heli<") == 2 and svg.count(">Ambulance<") == 2 and svg.count('class="sub expanded"') == 2, describe("/api/svg", {"process": "(the stroke)", "expand": ",".join(labels)}), d.get("error") or {"Heli": svg.count(">Heli<"), "expanded": svg.count('class="sub expanded"')})
+    fb = {"process": rel, "name": "release", "time": "0", "max_iter": "2"}
+    b = c.post("/api/bounds", fb)
+    L.check("the bounds of the release read the built-in tests", b.get("names") == ["hours", "euro"] and b.get("loops") == 1 and b.get("lower_exact") == ["197/8", "50"] and b.get("upper_exact") == ["361/8", "1940"], describe("/api/bounds", dict(fb, process="(the release)")), b)
+    store_file = os.path.join(EXAMPLES_DIR, "store.json")
+    rel_file = os.path.join(EXAMPLES_DIR, "release.cpi")
+    if os.path.isfile(store_file) and os.path.isfile(rel_file):
+        out = os.path.join(work, "examples-release.yaml")
+        code, _, errtext = cli(args.bin, ["parse", "--file", rel_file, "--saved", store_file, "--out", out])
+        found, trace = cli_bound(args.bin, out, False, max_iter=2) if code == 0 else (None, errtext)
+        L.check("the release of the command line, through examples/store.json, has the bounds of the page", found is not None and "upper" in b and close(found["U at s0"], b["upper"]) and close(found["L at s0"], b["lower"]), f"parse --file {rel_file} --saved {store_file}\n{trace}", b)
+    else:
+        L.skip("the release of the command line", f"no {store_file}")
+    fs = {"process": stroke, "name": "stroke", "workers": "1", "limit": "60", "time": "1"}
+    sid, final = run_to_end(c, fs, L, "the stroke")
+    if sid is not None:
+        L.check("the live search of the stroke reads the built-in transport", final.get("status") == "complete" and len(final.get("points", [])) == 12 and final.get("names") == ["time", "euro", "disability"], describe("/api/start", dict(fs, process="(the stroke)")), final.get("error") or {"status": final.get("status"), "points": len(final.get("points", [])), "names": final.get("names")})
+        decided = [p for p in final.get("points", []) if p.get("steps")]
+        if decided:
+            decisions = ";".join(".".join(str(n["id"]) for n in st["after"]) + ">" + str(st["take"]["id"]) for st in decided[0]["steps"])
+            fx = {"process": stroke, "name": "stroke", "time": "1", "max_iter": "1", "decisions": decisions}
+            x = c.post("/api/explain", fx, timeout=120)
+            L.check("the explanation of a strategy of the stroke reads the built-in transport", isinstance(x.get("explanations"), list) and len(x["explanations"]) > 0, describe("/api/explain", dict(fx, process="(the stroke)")), clip(x, 300))
+    # an example referred to from a typed text
+    f = {"process": "( @coin , (Z, 1, {a: 1}) )"}
+    d = c.post("/api/svg", f)
+    L.check("a typed text refers to an example by its id", d.get("svg", "").count('class="task"') == 1 and [x.get("name") for x in d.get("subs", [])] == ["coin"], describe("/api/svg", f), d.get("error") or d.get("subs"))
+    # a cycle through an example: tests referring to the release, which refers to tests
+    f = {"process": "( @release , (A, 1, {x: 1}) )", "name": "tests"}
+    d = c.post("/api/svg", f)
+    L.check("a text named tests that refers to the release is a cycle", "cycle" in d.get("error", "") and "release" in d.get("error", ""), describe("/api/svg", f), d)
+    r = c.post("/api/save", f)
+    L.check("a save closing a cycle through an example is refused", "cycle" in r.get("error", "") and "ok" not in r, describe("/api/save", f), r)
+    L.check("the refused save left the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
+    # a saved process named tests shadows the built-in one, until it is deleted
+    f = {"name": "tests", "process": "(Other, 1, {hours: 1})"}
+    r = c.post("/api/save", f)
+    L.check("a process is saved under the name of an example", r == {"ok": True, "name": "tests"}, describe("/api/save", f), r)
+    fx = {"process": rel, "name": "release", "expand": "11"}
+    d = c.post("/api/svg", fx)
+    svg = d.get("svg", "")
+    L.check("the saved tests shadows the built-in one in the drawing", ">Other<" in svg and ">Unit<" not in svg and svg.count('class="task"') == 8, describe("/api/svg", dict(fx, process="(the release)")), d.get("error") or {"tasks": svg.count('class="task"'), "Other": ">Other<" in svg, "Unit": ">Unit<" in svg})
+    b2 = c.post("/api/bounds", fb)
+    L.check("the saved tests shadows the built-in one in the bounds", "lower_exact" in b2 and b2.get("lower_exact") != b.get("lower_exact"), describe("/api/bounds", dict(fb, process="(the release)")), [b.get("lower_exact"), b2.get("lower_exact")])
+    e = c.post("/api/example", {"id": "tests"})
+    L.check("the example tests is still the built-in text", e.get("process") == texts.get("tests"), describe("/api/example", {"id": "tests"}), clip(e, 200))
+    L.check("the list of the examples does not change with the store", json.loads(c.get("/api/examples")[1]).get("examples") == listed, "GET /api/examples", None)
+    r = c.post("/api/delete", {"name": "tests"})
+    L.check("the saved tests deletes", r == {"ok": True, "name": "tests"}, "POST /api/delete tests", r)
+    d = c.post("/api/svg", fx)
+    L.check("the built-in tests is back once the saved one is gone", ">Unit<" in d.get("svg", "") and ">Other<" not in d.get("svg", ""), describe("/api/svg", dict(fx, process="(the release)")), d.get("error") or d.get("subs"))
+    L.check("the section leaves the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
 
 
 def section_svg(L, c, args):
@@ -1227,7 +1405,12 @@ def section_hygiene(L, c, args, server):
     status, body = c.status_of("/", "GET")
     L.check("GET / is the page", status == 200 and body.lower().startswith("<!doctype html>") and "/api/hello" in body, "GET /", f"{status} {len(body)} bytes")
     L.check("the page ends with its script", body.rstrip().lower().endswith("</script>") and body.count("<script") == 1, "GET /", body[-100:])
-    L.check("the page names every route it uses", all(r in body for r in ("/api/bench", "/api/saved", "/api/save", "/api/load", "/api/delete", "/api/svg", "/api/bounds", "/api/start", "/api/snapshot", "/api/stop")), "GET /", [r for r in ("/api/bench", "/api/saved", "/api/save", "/api/load", "/api/delete", "/api/svg", "/api/bounds", "/api/start", "/api/snapshot", "/api/stop") if r not in body])
+    routes = ("/api/bench", "/api/saved", "/api/save", "/api/load", "/api/delete", "/api/svg", "/api/bounds", "/api/start", "/api/snapshot", "/api/stop")
+    if not args.no_loops:
+        # the route of one example with the quote that closes it in the
+        # page, the route of the list being the same text and an s
+        routes += ("/api/examples", "/api/example'")
+    L.check("the page names every route it uses", all(r in body for r in routes), "GET /", [r for r in routes if r not in body])
     # a body of three megabytes, refused before it is read
     big = ("process=" + "A" * (3 * 1024 * 1024)).encode()
     try:
@@ -1360,7 +1543,7 @@ def main():
     ap.add_argument("--work", default=None, help="the scratch folder (default: a fresh temporary folder)")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder when it was temporary")
     ap.add_argument("--verbose", action="store_true", help="print every passed check too")
-    ap.add_argument("--only", default=None, help="comma-separated sections to run: hello,bench,svg,bounds,frontier,lifecycle,saved,hygiene")
+    ap.add_argument("--only", default=None, help="comma-separated sections to run: hello,bench,examples,svg,bounds,frontier,lifecycle,saved,hygiene")
     args = ap.parse_args()
 
     binary = os.path.abspath(args.bin)
@@ -1405,6 +1588,8 @@ def main():
         hello = section_hello(L, c, args) if wanted("hello") else {"bench": bool(args.bench), "loops": bool(args.bench_loops), "modes": []}
         if wanted("bench"):
             section_bench(L, c, args, hello)
+        if wanted("examples"):
+            section_examples(L, c, args, work)
         if wanted("svg"):
             section_svg(L, c, args)
         if wanted("bounds"):
