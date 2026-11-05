@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """Fetch the source benchmark and unpack the recorded campaign.
 
-Two preparations, both idempotent, so running this again verifies and
+Three preparations, each idempotent, so running this again verifies and
 touches nothing. First, the thousand process shapes and the generator of
 the impact vectors come from process-impact-benchmarks (Workneh, Sala,
 Rizzi, Cristani, Information Systems 2025): this script clones that
 repository into this directory and checks out the recorded commit, so the
 shapes underneath every stage are the recorded shapes and cannot
-drift. Second, the reference campaign as it was recorded, instances,
+drift. Second, the thousand shapes with loops are the branch `loops` of
+the same repository: this script clones that branch beside the first
+clone, into `process-impact-benchmarks-loops`, and checks out the commit
+pinned below, which is where `make_bpmn_cpi.py --loops`, the campaign
+with loops and the page of `sdcpi serve`, in its panel of the benchmark,
+look for them. Third, the reference campaign as it was recorded, instances,
 optima, bounds, refinement rounds and results, ships with this repository
 as a split compressed archive: this script reassembles it and unpacks it
 into `default_experiment/`, the folder the stages read when they are run
@@ -29,6 +34,11 @@ HERE = Path(__file__).resolve().parent  # the experiment directory; everything g
 BENCH = HERE / "process-impact-benchmarks"
 URL = "https://github.com/PietroSala/process-impact-benchmarks.git"
 COMMIT = "f591418b560a3c52ba5b5fada9274ea955d7c3f1"
+# the shapes with loops: the branch `loops` of the same repository, in a
+# clone of its own beside the one of main, pinned as that one is
+BENCH_LOOPS = HERE / "process-impact-benchmarks-loops"
+BRANCH_LOOPS = "loops"
+COMMIT_LOOPS = "e30425ed2cf12bfc6ac951d65f0a37b08c12ba36"
 
 ARCHIVE = HERE / "default_experiment_archive"
 DEFAULT = HERE / "default_experiment"
@@ -47,6 +57,25 @@ def fetch_benchmark() -> int:
               f"    git -C {BENCH} checkout --detach {COMMIT}", file=sys.stderr)
         return 1
     print(f"process-impact-benchmarks at {COMMIT[:12]}, as the record pins it")
+    return 0
+
+
+def fetch_loops() -> int:
+    """The branch with loops, cloned and pinned as the benchmark is. The
+    stages and the drivers that call `fetch_benchmark` do not come here:
+    only this script fetches the shapes with loops."""
+    if not BENCH_LOOPS.exists():
+        subprocess.run(["git", "clone", "--branch", BRANCH_LOOPS, URL, str(BENCH_LOOPS)], check=True)
+        subprocess.run(["git", "-C", str(BENCH_LOOPS), "checkout", "--detach", COMMIT_LOOPS],
+                       check=True)
+    head = subprocess.run(["git", "-C", str(BENCH_LOOPS), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    if head != COMMIT_LOOPS:
+        print(f"{BENCH_LOOPS} sits at {head[:12]} and this script pins {COMMIT_LOOPS[:12]};\n"
+              f"move it aside and run this script again, or check out the pin:\n"
+              f"    git -C {BENCH_LOOPS} checkout --detach {COMMIT_LOOPS}", file=sys.stderr)
+        return 1
+    print(f"process-impact-benchmarks-loops at {COMMIT_LOOPS[:12]}, the branch {BRANCH_LOOPS} as pinned here")
     return 0
 
 
@@ -80,7 +109,12 @@ def unpack_campaign() -> int:
 
 def main() -> int:
     code = fetch_benchmark()
-    return code if code else unpack_campaign()
+    if code:
+        return code
+    # the two that follow do not depend on each other: both are tried, and
+    # the script fails when either does
+    loops = fetch_loops()
+    return unpack_campaign() or loops
 
 
 if __name__ == "__main__":
