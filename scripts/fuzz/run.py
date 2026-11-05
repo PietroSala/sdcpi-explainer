@@ -58,8 +58,10 @@ and /api/start, /api/snapshot, /api/stop; then the malformed bodies: empty,
 fields missing, five megabytes, invalid percent-encoding, a byte that is
 not UTF-8, a process field of a million characters and of two hundred
 thousand, workers 0, -1 and 1000, a limit of 0, 1e9 and abc, max_iter 0,
-500 and inf, a window of fifty components, a thousand names to maximize, a
-lying Content-Length, unknown identifiers and unknown routes. Every answer
+500 and inf, a window of fifty components, a window and a tolerance mixing
+parts by name and by position, exponents of eighteen digits, a thousand
+names to maximize, a lying Content-Length, unknown identifiers and unknown
+routes. Every answer
 must be HTTP 200 with a JSON object holding a result or an "error" string;
 a 400 or 404 with a one-line reason is accepted as a refusal for the bodies
 the server cannot read at all (too large, not UTF-8, no such route) and
@@ -1156,7 +1158,7 @@ class Page:
         must answer within a few seconds."""
         L = self.ledger
         f = self.form
-        obj = self.call("stop-cuts start", "/api/start", f(process=slow, name="", workers="1", ablation="both", limit="2", time="1", max_iter="1"))
+        obj = self.call("stop-cuts start", "/api/start", f(process=slow, name="", workers="1", ablation="both", limit="2", time="1", max_iter="2"))
         if obj is None or "id" not in obj:
             L.skip("stop-cuts", "the slow search did not start")
             return
@@ -1251,6 +1253,14 @@ class Page:
         self.call("window-reversed frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", window="100,0"))
         self.call("window-commas frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", window=",,,,,,"))
         self.call("window-long frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", window="1" * 100_000))
+        # the two forms mixed, more parts than components, and exponents that
+        # would take longer to write out than the limit of the search
+        for route in ("/api/frontier", "/api/start", "/api/explain"):
+            for name, value in (("window", "x=0,5;0,5;0,5"), ("window", "0,5;x=0,5;0,5"), ("window", "x=0,5;"), ("tolerance", "x=0;0;0"), ("tolerance", "0;x=0;0")):
+                self.call(f"{name}-mixed-{value} {route}", route, f(process=tiny, workers="1", limit="1", **{name: value}))
+        for value in ("1e100000000", "1e100000000000", "1e-100000000", "1e-9223372036854775808", "1.5e-9223372036854775808", "1e9223372036854775807"):
+            self.call(f"window-exponent-{value} frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", window=f"x=0,{value}"), timeout=20)
+            self.call(f"tolerance-exponent-{value} frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", tolerance=f"x={value}"), timeout=20)
         self.call("maximize-1000 bounds", "/api/bounds", f(process=tiny, time="1", maximize=",".join(f"n{i}" for i in range(1000))))
         self.call("maximize-1000 frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", time="1", maximize=",".join(f"n{i}" for i in range(1000))))
         self.call("maximize-repeated frontier", "/api/frontier", f(process=tiny, workers="1", limit="1", time="1", maximize="time,time,time,x,x"))
@@ -1468,8 +1478,10 @@ def main() -> int:
                     names = re.findall(r"\b([A-Za-z_]\w*)\s*:", text)[:1]
                     page.text(label, text, names, small=len(text) < 500)
                 if loops:
+                    # the deepest nest the parser allows, which runs far past
+                    # any stop without the clock read inside a macro step
                     slow = tiny
-                    for _ in range(23):
+                    for _ in range(16):
                         slow = f"(0.5 {slow})"
                     page.stop_cuts(tiny, slow)
                 print("[page] malformed bodies")
