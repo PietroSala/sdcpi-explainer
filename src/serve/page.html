@@ -1468,17 +1468,40 @@ function maxIterSent() {
 // lower increment may be negative, the run being free to take past the
 // bound a cheaper branch than the strategy takes after the loop.
 const num = (v) => String(+v);
-const signed = (v) => (+v < 0 ? '\u2212 ' + String(-v) : '+ ' + String(+v));
+const signed = (v) => (String(v).startsWith('-') ? '\u2212 ' + String(v).slice(1) : '+ ' + String(v));
+// An end of that interval as it is printed: at most three decimals, rounded on
+// the exact rational, the lower end down and the upper end up, so that what is
+// printed still encloses the interval. A number with fewer decimals prints as
+// it is, and the digits of the double go in the title.
+function outward(exact, up) {
+  const [n, den] = String(exact).split('/').map(x => BigInt(x));
+  const scaled = n * 1000n, d = den === undefined ? 1n : den;
+  let q = scaled / d;   // truncated towards zero
+  if (scaled % d !== 0n) {
+    if (up && scaled > 0n) q += 1n;
+    if (!up && scaled < 0n) q -= 1n;
+  }
+  const whole = q < 0n ? -q : q;
+  const decimals = String(whole % 1000n).padStart(3, '0').replace(/0+$/, '');
+  return (q < 0n ? '-' : '') + String(whole / 1000n) + (decimals ? '.' + decimals : '');
+}
 function continuedParts(d, p) {
   if (!p.continued) return [];
   const names = d_names(d);
-  return d_order(d).map(j => ({ name: names[j], low: num(p.continued.low[j]), up: num(p.continued.up[j]) }));
+  return d_order(d).map(j => ({
+    name: names[j],
+    low: outward(p.continued.low_exact[j], false),
+    up: outward(p.continued.up_exact[j], true),
+    lowFull: num(p.continued.low[j]),
+    upFull: num(p.continued.up[j]),
+  }));
 }
 // the compact form of the table, the upper increments alone, and the full
-// one, every component with its two ends, one value when they agree
+// one of its title, every component with its two ends, one value when they
+// agree; rounded outward the two ends print the same only when they agree
 const continuedCompact = (d, p) => continuedParts(d, p).map(c => signed(c.up).replace(' ', '')).join(', ');
 const continuedText = (d, p) => continuedParts(d, p)
-  .map(c => `${c.name} ${c.low === c.up ? signed(c.up) : signed(c.low) + ' to ' + signed(c.up)}`).join('; ');
+  .map(c => `${c.name} ${c.low === c.up ? signed(c.upFull) : signed(c.lowFull) + ' to ' + signed(c.upFull)}`).join('; ');
 
 // A node in a sentence: its name, or with the detailed regions on, the
 // identifier that the drawing shows, "Mend(5)" for a task and the bare
@@ -1548,7 +1571,9 @@ function select(i, reveal = true) {
   const cont = p.continued
     ? `<div style="margin-bottom:7px" title="The strategy is what the search found within ${K} ${K === 1 ? 'pass' : 'passes'}. From the first draw that runs a loop again past them, the rest of the run is paid between the two bounds of the process with its loops unbounded, whatever is taken there: the value lies between the value of the point plus the first number and plus the second.">with the loops unbounded, whatever is taken past ${K} ${K === 1 ? 'pass' : 'passes'}: `
       + continuedParts(LAST, p).map(c => `<span style="margin-right:14px">${h(c.name)} `
-          + (c.low === c.up ? `<code>${signed(c.up)}</code>` : `<code>${signed(c.low)}</code> to <code>${signed(c.up)}</code>`)
+          + (c.low === c.up
+              ? `<code title="${h(signed(c.upFull))}">${signed(c.up)}</code>`
+              : `<code title="${h(signed(c.lowFull))}">${signed(c.low)}</code> to <code title="${h(signed(c.upFull))}">${signed(c.up)}</code>`)
           + `</span>`).join('')
       + `</div>`
     : '';
