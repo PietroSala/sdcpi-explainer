@@ -216,6 +216,13 @@ pub fn parse_rational(text: &str) -> Option<BigRational> {
     parse_decimal(text)
 }
 
+/// The largest exponent a decimal may carry, either way. A number is written
+/// out in full here, so an exponent is what it costs to read: ten to a hundred
+/// million holds a thread for a minute and ten to a hundred thousand million
+/// for as long as the machine lasts, and no value or bound of a process needs
+/// more than a few thousand digits.
+const MAX_EXPONENT: u64 = 4096;
+
 pub fn parse_decimal(text: &str) -> Option<BigRational> {
     let text = text.trim();
     if text.is_empty() {
@@ -225,6 +232,9 @@ pub fn parse_decimal(text: &str) -> Option<BigRational> {
         Some(i) => (&text[..i], text[i + 1..].parse::<i64>().ok()?),
         None => (text, 0i64),
     };
+    if exponent.unsigned_abs() > MAX_EXPONENT {
+        return None;
+    }
     let (sign, digits) = match mantissa.strip_prefix('-') {
         Some(rest) => (-1, rest),
         None => (1, mantissa.strip_prefix('+').unwrap_or(mantissa)),
@@ -376,5 +386,15 @@ mod tests {
         let r = parse_decimal("12").unwrap();
         assert_eq!(r, BigRational::from_integer(BigInt::from(12)));
         assert_eq!(decimal(&parse_decimal("2.50").unwrap(), 6), "2.5");
+    }
+
+    #[test]
+    fn an_exponent_past_the_bound_does_not_read() {
+        assert!(parse_decimal("1e4096").is_some());
+        assert!(parse_decimal("1e-4096").is_some());
+        for text in ["1e4097", "1e-4097", "1e100000000", "1e-100000000", "1e9223372036854775807", "1e-9223372036854775808", "1.5e-9223372036854775808"] {
+            assert!(parse_decimal(text).is_none(), "{text} reads");
+            assert!(parse_rational(text).is_none(), "{text} reads");
+        }
     }
 }
