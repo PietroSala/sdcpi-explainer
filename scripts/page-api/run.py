@@ -589,11 +589,14 @@ def section_examples(L, c, args, work):
     # built-in subprocess, in the drawing, the bounds, the two searches and
     # the explanations
     rel, stroke = texts["release"], texts["stroke"]
-    f = {"process": rel, "name": "release", "expand": "11"}
+    f = {"process": rel, "name": "release"}
     d = c.post("/api/svg", f)
-    svg = d.get("svg", "")
     L.check("the release names its subprocess tests, shown as Tests", [(x.get("name"), x.get("shown")) for x in d.get("subs", [])] == [("tests", "Tests")], describe("/api/svg", dict(f, process="(the release)")), d.get("error") or d.get("subs"))
-    L.check("the release expanded draws the tasks of the built-in tests", all(f">{t}<" in svg for t in ("Unit", "Signoff", "Patch", "Refactor")) and svg.count('class="sub expanded"') == 1, describe("/api/svg", dict(f, process="(the release)")), d.get("error") or re.findall(r'class="name"[^>]*>([^<]*)<', svg))
+    # the box is expanded by the identifier it shows, read from the answer
+    frel = {"process": rel, "name": "release", "expand": ",".join(x.get("label", "") for x in d.get("subs", []))}
+    d = c.post("/api/svg", frel)
+    svg = d.get("svg", "")
+    L.check("the release expanded draws the tasks of the built-in tests", all(f">{t}<" in svg for t in ("Unit", "Signoff", "Patch", "Refactor")) and svg.count('class="sub expanded"') == 1, describe("/api/svg", dict(frel, process="(the release)")), d.get("error") or re.findall(r'class="name"[^>]*>([^<]*)<', svg))
     f = {"process": stroke, "name": "stroke"}
     d = c.post("/api/svg", f)
     L.check("the stroke names its subprocess transport twice, shown as Pickup and Transfer", [(x.get("name"), x.get("shown")) for x in d.get("subs", [])] == [("transport", "Pickup"), ("transport", "Transfer")], describe("/api/svg", dict(f, process="(the stroke)")), d.get("error") or d.get("subs"))
@@ -638,10 +641,9 @@ def section_examples(L, c, args, work):
     f = {"name": "tests", "process": "(Other, 1, {hours: 1})"}
     r = c.post("/api/save", f)
     L.check("a process is saved under the name of an example", r == {"ok": True, "name": "tests"}, describe("/api/save", f), r)
-    fx = {"process": rel, "name": "release", "expand": "11"}
-    d = c.post("/api/svg", fx)
+    d = c.post("/api/svg", frel)
     svg = d.get("svg", "")
-    L.check("the saved tests shadows the built-in one in the drawing", ">Other<" in svg and ">Unit<" not in svg and svg.count('class="task"') == 8, describe("/api/svg", dict(fx, process="(the release)")), d.get("error") or {"tasks": svg.count('class="task"'), "Other": ">Other<" in svg, "Unit": ">Unit<" in svg})
+    L.check("the saved tests shadows the built-in one in the drawing", ">Other<" in svg and ">Unit<" not in svg and svg.count('class="task"') == 8, describe("/api/svg", dict(frel, process="(the release)")), d.get("error") or {"tasks": svg.count('class="task"'), "Other": ">Other<" in svg, "Unit": ">Unit<" in svg})
     b2 = c.post("/api/bounds", fb)
     L.check("the saved tests shadows the built-in one in the bounds", "lower_exact" in b2 and b2.get("lower_exact") != b.get("lower_exact"), describe("/api/bounds", dict(fb, process="(the release)")), [b.get("lower_exact"), b2.get("lower_exact")])
     e = c.post("/api/example", {"id": "tests"})
@@ -649,8 +651,8 @@ def section_examples(L, c, args, work):
     L.check("the list of the examples does not change with the store", json.loads(c.get("/api/examples")[1]).get("examples") == listed, "GET /api/examples", None)
     r = c.post("/api/delete", {"name": "tests"})
     L.check("the saved tests deletes", r == {"ok": True, "name": "tests"}, "POST /api/delete tests", r)
-    d = c.post("/api/svg", fx)
-    L.check("the built-in tests is back once the saved one is gone", ">Unit<" in d.get("svg", "") and ">Other<" not in d.get("svg", ""), describe("/api/svg", dict(fx, process="(the release)")), d.get("error") or d.get("subs"))
+    d = c.post("/api/svg", frel)
+    L.check("the built-in tests is back once the saved one is gone", ">Unit<" in d.get("svg", "") and ">Other<" not in d.get("svg", ""), describe("/api/svg", dict(frel, process="(the release)")), d.get("error") or d.get("subs"))
     L.check("the section leaves the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
 
 
