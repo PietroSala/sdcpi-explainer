@@ -1646,6 +1646,7 @@ function select(i, reveal = true) {
     c.setAttribute('r', on ? 5.5 : 3);
     c.setAttribute('fill', on ? (prov ? '#fff' : '#d0342c') : (prov ? '#fff' : own));
     c.setAttribute('stroke', on ? '#d0342c' : own);
+    if (on) c.parentNode.appendChild(c);   // in front of every other point
   });
   document.querySelectorAll('svg polyline[data-i]').forEach(l => {
     const on = +l.dataset.i === i;
@@ -2051,7 +2052,7 @@ function svg(d, ox, oy, byTime, title) {
   // the points found outside the bounds, drawn grey as context, never chosen
   const O = (d.outside_points || []).map(p => [p.approx[ox], p.approx[oy]]);
   const top = title ? 14 : 0;
-  const W = 460, H = 280 + top, M = { l: 52, r: 18, t: (byTime ? 26 : 14) + top, b: 38 };
+  const W = 460, H = 280 + top, M = { l: 62, r: 18, t: (byTime ? 26 : 14) + top, b: 38 };
   const xs = P.concat(O).map(p => p[0]), ys = P.concat(O).map(p => p[1]);
   const pad = (a) => { const lo = Math.min(...a), hi = Math.max(...a);
                        const d = (hi - lo) || Math.abs(hi) || 1; return [lo - d * 0.12, hi + d * 0.12]; };
