@@ -147,8 +147,8 @@ EXAMPLES = [
     ("transport", "thesis", "transport.cpi", True, 1, [], 2),
     ("release-nested", "thesis", "release-nested.cpi", True, 2, [], 1024),
     ("line", "thesis", "line-thesis.cpi", False, 1, [], 4),
-    ("loop-choice", "thesis", "loop-choice.cpi", False, 2, [], 4),
     ("quantile", "thesis", "quantile.cpi", False, 1, [], 1),
+    ("loop-choice", "thesis", "loop-choice.cpi", False, 2, [], 4),
 ]
 
 # the points of the small frontiers, in the order of the names of the answer

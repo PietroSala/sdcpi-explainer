@@ -1,4 +1,4 @@
-# The coin, a strategy with no explanation on the cost (Proposition 3 of the
-# paper): a draw of nature of probability 1/2 between X and Y, then the choice
-# between C and D; the two components of the impact are named a and b.
+# The coin, the process of the section on the explanations on the cost of the
+# paper, on which a strategy has no explanation on the cost: a draw of nature of
+# probability 1/2 between X and Y; the choice between C and D; two components, a and b.
 ( (X, 1, {a: 1, b: 1}) ^[0.5] (Y, 1, {a: 1, b: 1}) ) , ( (C, 1, {a: 10}) ^ (D, 1, {b: 10}) )

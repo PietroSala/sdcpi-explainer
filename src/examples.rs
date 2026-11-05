@@ -4,10 +4,10 @@
 //! "Explaining Strategies for Expected Impacts" and the PhD thesis
 //! "Synthesizing Strategies for Quantitative Processes". Its text is a file
 //! under `examples/`, embedded here, and beside it the manifest keeps the
-//! settings its document computes it with: whether the expected time is a
-//! component of the frontier, the max iterations, and the components to
-//! maximize. The page lists them in its panel "Examples" and loads one with
-//! one click, settings included.
+//! settings it is read with: whether the expected time is a component of the
+//! frontier; the max iterations; the components to maximize. The page lists
+//! them in its panel "Examples" and loads one with one click, settings
+//! included.
 //!
 //! An example is loaded under its id, and the id is also what a reference
 //! `@id` resolves to on the page when the store of the saved processes holds
@@ -16,8 +16,7 @@
 //! store. On the command line the same two subprocesses are the entries of
 //! `examples/store.json`, for `sdcpi parse --saved`.
 
-/// One example: a process of a document, with the settings it is computed
-/// with there.
+/// One example: a process of a document, with the settings it is read with.
 pub struct Example {
     /// The name the example is loaded under, and the name a reference to it
     /// is written with.
@@ -47,7 +46,7 @@ pub const EXAMPLES: &[Example] = &[
         id: "release",
         group: "paper",
         title: "The software release",
-        source: "Example 1 and Figure 1, the running example",
+        source: "The running example",
         note: "A loop over the rounds of review, a choice of the fix and the tests as a subprocess: with max iterations 2 the frontier has 1937 points.",
         text: include_str!("../examples/release.cpi"),
         time: false,
@@ -58,8 +57,8 @@ pub const EXAMPLES: &[Example] = &[
         id: "tests",
         group: "paper",
         title: "The tests of the release",
-        source: "Example 1 and Figure 1, the subprocess of the release",
-        note: "The subprocess the release refers to as @tests: the unit tests, then a draw of nature between the signoff and a choice of the repair.",
+        source: "The running example, the subprocess of the release",
+        note: "The subprocess the release refers to as @tests: the unit tests, then a draw of nature between the signoff and a choice between a patch and a refactoring.",
         text: include_str!("../examples/tests.cpi"),
         time: false,
         max_iter: 2,
@@ -69,7 +68,7 @@ pub const EXAMPLES: &[Example] = &[
         id: "coin",
         group: "paper",
         title: "The coin",
-        source: "Proposition 3",
+        source: "The section on the explanations on the cost",
         note: "A strategy with no explanation on the cost: of the three points, (6, 6) is reached only by deciding on the draw, after two histories that paid the same.",
         text: include_str!("../examples/coin.cpi"),
         time: false,
@@ -125,21 +124,10 @@ pub const EXAMPLES: &[Example] = &[
         group: "thesis",
         title: "The metal line",
         source: "The chapter on the semantics, the running example",
-        note: "The process the semantics is defined on: a draw of nature beside a choice, then a choice that may read the draw, a frontier of four points.",
+        note: "The process the semantics is defined on, a draw of nature beside a choice and then a choice that may read the draw: a frontier of four points.",
         text: include_str!("../examples/line-thesis.cpi"),
         time: false,
         max_iter: 1,
-        maximize: &[],
-    },
-    Example {
-        id: "loop-choice",
-        group: "thesis",
-        title: "The loop over a choice",
-        source: "The chapter on time and loops",
-        note: "One decision per pass of the loop: with max iterations 2 the frontier has four points, one per word of two decisions.",
-        text: include_str!("../examples/loop-choice.cpi"),
-        time: false,
-        max_iter: 2,
         maximize: &[],
     },
     Example {
@@ -151,6 +139,17 @@ pub const EXAMPLES: &[Example] = &[
         text: include_str!("../examples/quantile.cpi"),
         time: false,
         max_iter: 1,
+        maximize: &[],
+    },
+    Example {
+        id: "loop-choice",
+        group: "thesis",
+        title: "The loop over a choice",
+        source: "The chapter on time and loops",
+        note: "One decision per pass of the loop: with max iterations 2 the frontier has four points, one per word of two decisions; the chapter computes it at three passes, where it has eight.",
+        text: include_str!("../examples/loop-choice.cpi"),
+        time: false,
+        max_iter: 2,
         maximize: &[],
     },
 ];
