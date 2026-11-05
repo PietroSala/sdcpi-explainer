@@ -59,7 +59,18 @@ What is walked, each step a group of checks:
                   and done, delete refused for a process referred to, the
                   keyboard on a thumb, another mode of the benchmark, the
                   legend of the time, a limit above the cap clamped
-  14  console     no console error and no page error during the walk
+  14  examples    (the loop tool alone, skipped with --no-loops) the panel
+                  "Examples" between the saved processes and the benchmark,
+                  its two headed lists, a row per example of the server;
+                  loading the release fills the box, names the process,
+                  turns the expected time off, sets max iterations to 2 and
+                  says so under the lists, and computing it gives the
+                  frontier of 1937 points; its subprocess expands; loading
+                  the winery sets the direction of points to maximize and
+                  gives its seven points; the stroke turns the time on
+                  again and leaves no direction behind; a point used as
+                  bounds does not outlive the next example
+  15  console     no console error and no page error during the walk
 
 Every failed check is a finding, printed with its step and the screenshot
 taken at that moment. The exit code is 0 when no check fails, 1 otherwise,
@@ -289,7 +300,8 @@ def walk(S, page, url, hello, args, PWTimeout):
     """Every step guarded: a timeout or an exception inside a step is a
     failed check of that step and the walk goes on with the next."""
     steps = [step_load, step_switches, step_typing, step_bench, step_saving, step_live,
-             step_filters, step_directions, step_paging, step_loops, step_time, step_narrow, step_more]
+             step_filters, step_directions, step_paging, step_loops, step_time, step_narrow, step_more,
+             step_examples]
     ctx = {"url": url, "hello": hello, "args": args, "answers": {}}
     for fn in steps:
         S.step(fn.__name__.replace("step_", ""))
@@ -1093,6 +1105,125 @@ def step_more(S, page, ctx):
     r = compute(page, 30000)
     S.check("a time limit above the cap is clamped and the search answers", r["n"] >= 1, f"{r}")
     reveal(page, "#limit"); page.fill("#limit", "10")
+
+
+def step_examples(S, page, ctx):
+    """The panel of the examples: the two lists, the release loaded with its
+    settings and computed, the winery with its direction, the settings of
+    one example taking the place of those of the one before."""
+    if ctx["args"].no_loops:
+        S.skip("the examples", "--no-loops: the binary has no panel of examples")
+        return
+    url = ctx["url"]
+    listed = get(url, "/api/examples")["examples"]
+    load = lambda eid: page.click(f"#examples button[data-example='{eid}']")
+    loaded = lambda eid: wait_js(page, "(e) => document.getElementById('exnote').textContent.startsWith('Loaded ' + e + ':')", 8000, eid)
+    dirs = lambda: page.evaluate("() => [...document.querySelectorAll('#dirs .seg')].map(s => s.dataset.n + ' ' + s.querySelector('button.on').dataset.v)")
+    state = lambda: page.evaluate("() => [(document.querySelector('#diagram svg') || {}).outerHTML || '', document.getElementById('window').innerHTML]")
+    # the panel, where it is and what it lists
+    order = page.evaluate("() => [...document.querySelectorAll('#g-process > details')].map(d => d.id)")
+    S.check("the panel Examples sits between the saved processes and the benchmark", order == ["savedpanel", "examples", "bench"], f"{order}")
+    S.check("the panel is always shown and its summary reads Examples",
+            page.evaluate("() => !document.getElementById('examples').hidden") and text_of(page, "#examples > summary") == "Examples")
+    heads = page.evaluate("() => [...document.querySelectorAll('#examples .exhead')].map(h => h.textContent)")
+    S.check("the two lists are headed by the paper and by the thesis",
+            heads == ["The paper: Explaining Strategies for Expected Impacts", "The thesis: Synthesizing Strategies for Quantitative Processes"], f"{heads}")
+    wait_js(page, "() => document.querySelectorAll('#examples li').length > 0")
+    rows = page.evaluate("() => ['ex-paper', 'ex-thesis'].map(id => [...document.querySelectorAll('#' + id + ' li')].map(li => [li.querySelector('button').dataset.example, li.querySelector('button').textContent, li.querySelector('b').textContent, ...[...li.querySelectorAll('.hint')].map(x => x.textContent)]))")
+    want = [[[e["id"], "Load", e["title"], e["source"], e["note"]] for e in listed if e["group"] == g] for g in ("paper", "thesis")]
+    S.check("every example of the server has a row under its document: a Load button, the title, the source and the note",
+            rows == want and len(rows[0]) == 3 and len(rows[1]) == 7, f"{[[r[0] for r in g] for g in rows]}",
+            repro="GET /api/examples against the rows of #ex-paper and #ex-thesis")
+    reveal(page, "#examples summary"); page.click("#examples summary")
+    S.shot("examples-panel")
+    # the release: the text, the name, the settings, the note
+    had = page.evaluate("() => LAST !== null")
+    release = post(url, "/api/example", id="release")
+    before = state()
+    load("release"); loaded("release")
+    S.check("loading the release fills the box with its text", page.evaluate("() => document.getElementById('proc').value") == release["process"],
+            repro="open Examples and press Load on the software release")
+    S.check("the process is named release, and is new to the store", text_of(page, "#pname") == "release" and text_of(page, "#pstate") == "new",
+            f"name {text_of(page, '#pname')!r}, pill {text_of(page, '#pstate')!r}")
+    S.check("the expected time is turned off", not checked(page, "time"))
+    passes = page.evaluate("() => document.getElementById('maxiter').value")
+    S.check("max iterations is set to 2", passes == "2", f"the field holds {passes!r}")
+    S.check("the note under the lists says what was loaded and with which settings",
+            text_of(page, "#exnote") == "Loaded release: expected time off, max iterations 2", f"{text_of(page, '#exnote')!r}")
+    if had:
+        S.check("the results of the text before leave the page", "The process changed" in (text_of(page, "#out") or ""))
+    else:
+        S.skip("the results of the text before leave the page", "no result was on the page")
+    wait_diagram(page, 15000, before=before)
+    names = page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)")
+    S.check("the diagram draws the release, its subprocess as one collapsed box",
+            sorted(names) == sorted(["Review", "Major", "Minor", "House", "Vendor", "Docs", "Ship"])
+            and page.evaluate("() => document.querySelectorAll('#diagram svg g.sub.collapsed').length") == 1, f"tasks {names}")
+    wait_js(page, "() => !document.getElementById('maxiter').disabled")
+    S.check("max iterations is live, the release having a loop", True)
+    wait_js(page, "() => [...document.querySelectorAll('#dirs .seg')].map(s => s.dataset.n).join() === 'euro,hours'")
+    S.check("the directions are those of the release, no time among them and nothing maximized", dirs() == ["euro min", "hours min"], f"{dirs()}")
+    S.shot("examples-release")
+    reveal(page, "#limit"); page.fill("#limit", "120")
+    r = compute(page, 150000)
+    S.check("computing the release gives the frontier of 1937 points", r["status"] == "complete" and r["n"] == 1937, f"{r['status']}, {r['n']} points",
+            repro="load the release from Examples and press Compute the frontier, the time limit at 120")
+    S.check("the frontier was computed without the time and with max iterations 2",
+            r["time"] is False and r["names"] == ["hours", "euro"] and page.evaluate("() => LAST.max_iter") == 2, f"{r['names']}, time {r['time']}")
+    S.shot("examples-release-frontier")
+    # the subprocess of the release, built in: it expands from the panel
+    reveal(page, "#subpanel summary")
+    page.evaluate("() => { document.getElementById('subpanel').open = true; }")
+    subs = page.evaluate("() => [...document.querySelectorAll('#subbox .subrow')].map(r => r.textContent)")
+    S.check("the sub-process panel lists the tests of the release", len(subs) == 1 and "Tests" in subs[0] and "@tests" in subs[0], f"{subs}")
+    page.click("#subbox button.tg")
+    wait_js(page, "() => document.querySelector('#diagram svg g.sub.expanded')")
+    names = page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)")
+    S.check("expanded, the box draws the tasks of the built-in tests", all(t in names for t in ("Unit", "Signoff", "Patch", "Refactor")) and len(names) == 11, f"tasks {names}")
+    S.shot("examples-release-expanded")
+    # the winery: the direction of points, and the sub-process forgotten
+    load("winery"); loaded("winery")
+    S.check("the note of the winery names the component maximized",
+            text_of(page, "#exnote") == "Loaded winery: expected time off, max iterations 1, points maximized", f"{text_of(page, '#exnote')!r}")
+    wait_js(page, "() => { const b = document.querySelector(\"#dirs .seg[data-n='points'] button.on\"); return !!b && b.dataset.v === 'max'; }")
+    S.check("loading the winery sets the direction of points to maximize", dirs() == ["euro min", "points max"] and page.evaluate("() => dirsField()") == "points", f"{dirs()}",
+            repro="load the winery from Examples and read the block Objective function")
+    wait_js(page, "() => [...document.querySelectorAll('#window .rname span:first-child')].some(s => s.textContent.includes('points \u2191'))")
+    S.check("the bounds carry the arrow of the direction", True)
+    S.check("the sub-process expanded in the release is forgotten", page.evaluate("() => EXPANDED.size") == 0)
+    r = compute(page, 30000)
+    values = page.evaluate("() => LAST.points.map(p => p.approx.map(Number))")
+    S.check("the winery has its seven points, the points maximized",
+            r["status"] == "complete" and r["maximized"] == [False, True]
+            and values == [[5150, 4.4], [5390, 5], [5710, 5.8], [5950, 6.4], [7190, 7], [7510, 7.8], [7750, 8.4]], f"{values}")
+    S.shot("examples-winery")
+    # the stroke: the time on again, no direction left from the winery
+    before = state()
+    load("stroke"); loaded("stroke")
+    S.check("the note of the stroke says the expected time is on", text_of(page, "#exnote") == "Loaded stroke: expected time on, max iterations 1", f"{text_of(page, '#exnote')!r}")
+    S.check("the expected time is turned on", checked(page, "time"))
+    wait_diagram(page, 15000, before=before)
+    wait_js(page, "() => [...document.querySelectorAll('#dirs .seg')].map(s => s.dataset.n).join() === 'time,disability,euro'")
+    S.check("no direction is left from the winery", page.evaluate("() => dirsField()") == "" and all(d.endswith(" min") for d in dirs()), f"{dirs()}")
+    S.check("the stroke draws its two transports as two collapsed boxes", page.evaluate("() => document.querySelectorAll('#diagram svg g.sub.collapsed').length") == 2)
+    r = compute(page, 30000)
+    S.check("the stroke has its twelve points, the time first", r["status"] == "complete" and r["n"] == 12 and r["names"] == ["time", "euro", "disability"], f"{r['n']} points, {r['names']}")
+    S.shot("examples-stroke")
+    # a point used as bounds does not outlive the next example: the cheapest
+    # point of the stroke would cut the frontier of its transport to one point
+    cheapest = page.evaluate("() => { const j = LAST.names.indexOf('euro'); let b = 0; LAST.points.forEach((p, i) => { if (+p.approx[j] < +LAST.points[b].approx[j]) b = i; }); select(b); return b; }")
+    wait_js(page, "() => document.getElementById('tobounds')")
+    page.click("#tobounds")
+    moved = page.evaluate("() => windowField()")
+    S.check("the cheapest point of the stroke, used as bounds, moves the window", "euro=" in moved, f"point {cheapest + 1}, window {moved!r}")
+    load("transport"); loaded("transport")
+    wait_js(page, "() => WNAMES.join() === 'time,euro'")
+    S.check("loading an example takes the bounds and the tolerances back to their start",
+            page.evaluate("() => windowField()") == "" and page.evaluate("() => tolField()") == "", f"window {page.evaluate('() => windowField()')!r}")
+    r = compute(page, 30000)
+    S.check("the transport has its two points, not cut by the bounds of the stroke", r["status"] == "complete" and r["n"] == 2 and r["time"] is True, f"{r['n']} points")
+    S.shot("examples-transport")
+    reveal(page, "#examples summary"); page.click("#examples summary")
 
 
 if __name__ == "__main__":
