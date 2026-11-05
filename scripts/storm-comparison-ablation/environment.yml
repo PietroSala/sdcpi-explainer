@@ -13,6 +13,7 @@ dependencies:
   - python=3.12
   - pyyaml          # every stage reads and writes the instance format
   - numpy           # the generator, and the impact modes of the benchmark
+  - scipy           # the impact modes of the benchmark import it
   - plotly          # the figures
   - python-kaleido  # plotly writes PDF through it
   - matplotlib      # joined by requirements.txt on 2026-08-28

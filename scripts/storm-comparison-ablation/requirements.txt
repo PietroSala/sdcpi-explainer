@@ -1,6 +1,7 @@
-# pip mirror of environment.yml: python >= 3.10 and these four.
+# pip mirror of environment.yml: python >= 3.10 and these six.
 pyyaml
 numpy
+scipy
 plotly
 kaleido
 matplotlib
