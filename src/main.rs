@@ -13,6 +13,7 @@ mod arena;
 mod parse;
 mod bound;
 mod exact;
+mod examples;
 mod explain;
 mod num;
 mod pareto;

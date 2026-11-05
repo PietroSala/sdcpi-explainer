@@ -27,7 +27,8 @@
 //!   * the search is given a time limit that the page cannot remove, because
 //!     a search with no limit does not have to terminate;
 //!   * no path from a request ever reaches the file system: the page is a
-//!     constant and the process is parsed by the parser of the crate. The one
+//!     constant, the examples of the paper and of the thesis are constants,
+//!     and the process is parsed by the parser of the crate. The one
 //!     thing read from disk is an instance of the benchmark, addressed by
 //!     four numbers and a mode that are checked against the grid before a
 //!     path is built from them, under a folder fixed when the server starts;
@@ -450,6 +451,60 @@ fn load_saved(body: &str, bench: &Bench) -> String {
     }
 }
 
+// -- the examples -------------------------------------------------------------
+
+/// The settings an example is computed with, as three fields of a JSON
+/// object: whether the expected time is a component, the max iterations,
+/// and the names of the components to maximize.
+fn settings_json(e: &crate::examples::Example) -> String {
+    let maximize: Vec<String> = e.maximize.iter().map(|n| esc(n)).collect();
+    format!(
+        "\"time\": {}, \"max_iter\": {}, \"maximize\": [{}]",
+        e.time,
+        e.max_iter,
+        maximize.join(", ")
+    )
+}
+
+/// The examples of the paper and of the thesis as the panel lists them:
+/// everything but the text, which the page asks for when one is loaded.
+fn examples_list() -> String {
+    let items: Vec<String> = crate::examples::EXAMPLES
+        .iter()
+        .map(|e| {
+            format!(
+                "{{\"id\": {}, \"group\": {}, \"title\": {}, \"source\": {}, \"note\": {}, {}}}",
+                esc(e.id),
+                esc(e.group),
+                esc(e.title),
+                esc(e.source),
+                esc(e.note),
+                settings_json(e)
+            )
+        })
+        .collect();
+    format!("{{\"examples\": [{}]}}", items.join(", "))
+}
+
+/// One example by its id: the name it is loaded under, its text and its
+/// settings. The examples are constants of the binary, so the id is looked
+/// up in a list and nothing of the request reaches the file system.
+fn load_example(body: &str) -> String {
+    let id = match field(body, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
+        Some(i) => i,
+        None => return err("no example was named"),
+    };
+    match crate::examples::find(&id) {
+        Some(e) => format!(
+            "{{\"name\": {}, \"process\": {}, {}}}",
+            esc(e.id),
+            esc(e.text),
+            settings_json(e)
+        ),
+        None => err(&format!("no example is named {id:?}")),
+    }
+}
+
 fn serve_one(mut stream: TcpStream, bench: &Bench) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
@@ -475,6 +530,11 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
         }
         ("POST", "/api/delete") => {
             let out = delete_saved(&body, bench);
+            send(&mut stream, 200, "application/json", &out)
+        }
+        ("GET", "/api/examples") => send(&mut stream, 200, "application/json", &examples_list()),
+        ("POST", "/api/example") => {
+            let out = load_example(&body);
             send(&mut stream, 200, "application/json", &out)
         }
         ("POST", "/api/frontier") => {
