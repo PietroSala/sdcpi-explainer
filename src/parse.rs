@@ -47,6 +47,11 @@
 //! the node 3 of the process the leaf 7 refers to. Who resolves a name is
 //! the caller, through `to_yaml_with`; `to_yaml` resolves nothing and fails
 //! on a reference.
+//!
+//! The bounds below are read on the tree as it is built, references included,
+//! since a short text may stand for a very large process: a text saved once
+//! and referred to many times is parsed once per reference, and the tree it
+//! makes is what the traversals recurse over and what the instance file pads.
 
 /// One node of the parsed process, before identifiers exist.
 enum Ast {
@@ -61,6 +66,7 @@ enum Ast {
         prob: Option<f64>,
         low: Box<Ast>,
         high: Box<Ast>,
+        size: Size,
     },
     /// A saved process spliced in place of a reference: one leaf of the
     /// process that names it, a whole subtree of the assembled one.
@@ -68,12 +74,72 @@ enum Ast {
         name: String,
         shown: String,
         inner: Box<Ast>,
+        size: Size,
     },
     /// A loop over a region, run again with the probability after each pass.
     Loop {
         prob: f64,
         inner: Box<Ast>,
+        size: Size,
     },
+}
+
+impl Ast {
+    fn size(&self) -> Size {
+        match self {
+            Ast::Task { .. } => Size::TASK,
+            Ast::Op { size, .. } | Ast::Sub { size, .. } | Ast::Loop { size, .. } => *size,
+        }
+    }
+}
+
+/// What a subtree holds, kept on every node as it is built.
+#[derive(Clone, Copy, Debug)]
+struct Size {
+    /// The levels under its root, a reference counting one: how far the
+    /// traversals of the tree recurse.
+    height: usize,
+    /// The most loops inside one another.
+    nest: usize,
+    nodes: u64,
+    tasks: u64,
+    /// The sum over the nodes of their depth under the root, which is what
+    /// the indentation of the instance file costs.
+    depths: u64,
+}
+
+impl Size {
+    const TASK: Size = Size { height: 0, nest: 0, nodes: 1, tasks: 1, depths: 0 };
+
+    fn op(low: Size, high: Size) -> Size {
+        Size {
+            height: 1 + low.height.max(high.height),
+            nest: low.nest.max(high.nest),
+            nodes: low.nodes + high.nodes + 1,
+            tasks: low.tasks + high.tasks,
+            depths: low.depths + high.depths + low.nodes + high.nodes,
+        }
+    }
+
+    fn reference(inner: Size) -> Size {
+        Size { height: inner.height + 1, depths: inner.depths + inner.nodes, ..inner }
+    }
+
+    fn looped(inner: Size) -> Size {
+        Size {
+            height: inner.height + 1,
+            nest: inner.nest + 1,
+            nodes: inner.nodes + 1,
+            tasks: inner.tasks,
+            depths: inner.depths + inner.nodes,
+        }
+    }
+
+    /// The bytes the instance file takes, four lines a node with four bytes
+    /// of padding a line per level, and about a hundred of text.
+    fn written(&self) -> u64 {
+        16 * self.depths + 128 * self.nodes
+    }
 }
 
 #[derive(Debug)]
@@ -94,8 +160,11 @@ pub struct Sub {
     pub root: u32,
     /// The identifier it shows, that of the leaf that refers to it.
     pub label: String,
-    /// The name it is saved under.
+    /// The name it is saved under, every link of an alias chain joined.
     pub name: String,
+    /// The links of that chain, one name each: the name it is referred to by
+    /// and, when its text is itself one reference, the names that one leads to.
+    pub links: Vec<String>,
     /// The name it is shown under, the saved name unless `[shown]` was given.
     pub shown: String,
     /// How many references lead to it, zero for one of the top process.
@@ -108,8 +177,36 @@ pub struct Sub {
 /// being resolved, against a cycle.
 struct Ctx<'r> {
     names: Vec<String>,
+    /// Where a name sits in the table, so that reading a task with many
+    /// impacts, once per reference, does not walk the table for each.
+    index: std::collections::HashMap<String, usize>,
     resolver: Option<&'r mut dyn FnMut(&str) -> Result<String, String>>,
     chain: Vec<String>,
+    /// The nodes built so far, a text referred to many times once per
+    /// reference: what the parse has cost in time and in memory.
+    built: u64,
+    /// The bytes of the texts referred to, read so far.
+    read: u64,
+}
+
+impl Ctx<'_> {
+    /// One node just built: the bounds of the parser, read on the tree.
+    fn count(&mut self, size: Size) -> Result<Size, String> {
+        self.built += 1;
+        if self.built > MAX_NODES || size.nodes > MAX_NODES {
+            return Err(format!("the process assembles to more than {MAX_NODES} nodes"));
+        }
+        if size.height > MAX_DEPTH {
+            return Err(format!("the term is deeper than {MAX_DEPTH}, parentheses and sequence folds together"));
+        }
+        if size.nest > MAX_NEST {
+            return Err(format!("the loops are nested deeper than {MAX_NEST}"));
+        }
+        if size.written() > MAX_WRITTEN {
+            return Err(format!("the process assembles to more than {} megabytes of instance file", MAX_WRITTEN >> 20));
+        }
+        Ok(size)
+    }
 }
 
 struct Scanner<'a> {
@@ -288,8 +385,32 @@ impl<'a> Scanner<'a> {
 
 /// The whole term, parentheses and sequence chain together, may reach this
 /// deep and no deeper: the traversals of the tree recurse, and a bound here
-/// turns what would abort the process into an error message.
+/// turns what would abort the process into an error message. It holds of the
+/// tree as it is built, references included, and not only of the descent
+/// through the text, since a fold sits above the regions to its left.
 const MAX_DEPTH: usize = 2000;
+
+/// How many loops may sit inside one another. A run of a nest passes the bound
+/// on the passes to the power of its depth through the innermost region, and
+/// the bounds of a nest grow with the square of its depth in long rationals;
+/// the benchmark with loops nests five at most.
+const MAX_NEST: usize = 16;
+
+/// The nodes of a process assembled, and the nodes built on the way to it. A
+/// text of the largest body the page accepts, written out, holds fewer.
+const MAX_NODES: u64 = 1 << 17;
+
+/// The instance file of a process assembled, in bytes: a chain of two thousand
+/// tasks takes a quarter of this.
+const MAX_WRITTEN: u64 = 1 << 28;
+
+/// The bytes read through references, a text referred to many times once per
+/// reference.
+const MAX_READ: u64 = 1 << 28;
+
+/// The values of the impacts of a process assembled: one per task and impact
+/// name, the names being one table over the whole assembly.
+const MAX_CELLS: u64 = 1 << 22;
 
 fn parse_process(
     sc: &mut Scanner,
@@ -309,11 +430,13 @@ fn parse_process(
                 return Err(format!("the term is deeper than {MAX_DEPTH}, parentheses and sequence folds together"));
             }
             let high = parse_region(sc, ctx, depth + folds)?;
+            let size = ctx.count(Size::op(low.size(), high.size()))?;
             low = Ast::Op {
                 kind: "sequence",
                 prob: None,
                 low: Box::new(low),
                 high: Box::new(high),
+                size,
             };
             sc.skip();
         }
@@ -341,7 +464,8 @@ fn parse_process(
         return Ok(low);
     };
     let high = parse_region(sc, ctx, depth)?;
-    Ok(Ast::Op { kind, prob, low: Box::new(low), high: Box::new(high) })
+    let size = ctx.count(Size::op(low.size(), high.size()))?;
+    Ok(Ast::Op { kind, prob, low: Box::new(low), high: Box::new(high), size })
 }
 
 /// A reference `@saved` or `@saved[shown]`: the saved text is parsed in
@@ -392,6 +516,10 @@ fn parse_reference(sc: &mut Scanner, ctx: &mut Ctx<'_>, depth: usize) -> Result<
             ))
         }
     };
+    ctx.read += text.len() as u64;
+    if ctx.read > MAX_READ {
+        return Err(format!("the references read more than {} megabytes of text", MAX_READ >> 20));
+    }
     ctx.chain.push(name.clone());
     let mut inner = Scanner::new(&text);
     // the saved process an error comes from is named once, the innermost
@@ -403,7 +531,8 @@ fn parse_reference(sc: &mut Scanner, ctx: &mut Ctx<'_>, depth: usize) -> Result<
         return Err(format!("in the saved process {name}: trailing input at byte {}", inner.at));
     }
     ctx.chain.pop();
-    Ok(Ast::Sub { name, shown, inner: Box::new(ast) })
+    let size = ctx.count(Size::reference(ast.size()))?;
+    Ok(Ast::Sub { name, shown, inner: Box::new(ast), size })
 }
 
 fn parse_region(
@@ -436,7 +565,8 @@ fn parse_region(
         }
         let inner = parse_process(sc, ctx, depth + 1)?;
         sc.eat(b')')?;
-        return Ok(Ast::Loop { prob: p, inner: Box::new(inner) });
+        let size = ctx.count(Size::looped(inner.size()))?;
+        return Ok(Ast::Loop { prob: p, inner: Box::new(inner), size });
     }
     // a task: name, duration, and an optional impact map
     let name = sc.name()?;
@@ -451,6 +581,7 @@ fn parse_region(
         return Err(format!("the task {name} carries the duration {d}, and a duration is at most 127, the state holding a progress in a byte"));
     }
     let mut impact: Vec<(usize, f64)> = Vec::new();
+    let mut named = std::collections::HashSet::new();
     sc.skip();
     if sc.peek() == Some(b',') {
         sc.eat(b',')?;
@@ -465,14 +596,15 @@ fn parse_region(
                         "the impact {iname} of {name} is {v}, and the map names only what is strictly positive; leave a zero out"
                     ));
                 }
-                let idx = match ctx.names.iter().position(|n| n == &iname) {
-                    Some(i) => i,
+                let idx = match ctx.index.get(&iname) {
+                    Some(i) => *i,
                     None => {
                         ctx.names.push(iname.clone());
+                        ctx.index.insert(iname.clone(), ctx.names.len() - 1);
                         ctx.names.len() - 1
                     }
                 };
-                if impact.iter().any(|(i, _)| *i == idx) {
+                if !named.insert(idx) {
                     return Err(format!("the task {name} names the impact {iname} twice"));
                 }
                 impact.push((idx, v));
@@ -486,23 +618,8 @@ fn parse_region(
         sc.eat(b'}')?;
     }
     sc.eat(b')')?;
+    ctx.count(Size::TASK)?;
     Ok(Ast::Task { name, duration: d, impact })
-}
-
-fn count(ast: &Ast) -> (u32, u32) {
-    match ast {
-        Ast::Sub { inner, .. } => count(inner),
-        Ast::Loop { inner, .. } => {
-            let (n, t) = count(inner);
-            (n + 1, t)
-        }
-        Ast::Task { .. } => (1, 1),
-        Ast::Op { low, high, .. } => {
-            let (nl, tl) = count(low);
-            let (nh, th) = count(high);
-            (nl + nh + 1, tl + th)
-        }
-    }
 }
 
 fn fmt_number(v: f64) -> String {
@@ -518,10 +635,9 @@ fn emit(ast: &Ast, k: usize, next: &mut u32, indent: usize, out: &mut String) {
     match ast {
         // a spliced process is its tree: the engine never sees the seam
         Ast::Sub { inner, .. } => emit(inner, k, next, indent, out),
-        Ast::Loop { prob, inner } => {
+        Ast::Loop { prob, inner, .. } => {
             // in-order with one child: the region first, then the node
-            let (low_nodes, _) = count(inner);
-            let my_id = *next + low_nodes + 1;
+            let my_id = *next + inner.size().nodes as u32 + 1;
             out.push_str(&format!("{pad}- loop: {prob}\n"));
             out.push_str(&format!("{pad}  id: {my_id}\n"));
             out.push_str(&format!("{pad}  low:\n"));
@@ -539,12 +655,11 @@ fn emit(ast: &Ast, k: usize, next: &mut u32, indent: usize, out: &mut String) {
             out.push_str(&format!("{pad}  duration: {duration}\n"));
             out.push_str(&format!("{pad}  impact: [{}]\n", list.join(", ")));
         }
-        Ast::Op { kind, prob, low, high } => {
+        Ast::Op { kind, prob, low, high, .. } => {
             // in-order: the low subtree first, the node, the high subtree;
             // the node line prints before its children, so its identifier is
-            // reserved by counting the low subtree first
-            let (low_nodes, _) = count(low);
-            let my_id = *next + low_nodes + 1;
+            // reserved by the count of the low subtree
+            let my_id = *next + low.size().nodes as u32 + 1;
             match prob {
                 Some(p) => out.push_str(&format!("{pad}- {kind}: {p}\n")),
                 None => out.push_str(&format!("{pad}- {kind}:\n")),
@@ -601,7 +716,7 @@ fn walk(
             labels[id as usize] = format!("{prefix}{own}");
             id
         }
-        Ast::Sub { name, shown, inner } => {
+        Ast::Sub { name, shown, inner, .. } => {
             *own += 1;
             let label = format!("{prefix}{own}");
             let at = subs.len();
@@ -609,6 +724,7 @@ fn walk(
                 root: 0,
                 label: label.clone(),
                 name: name.clone(),
+                links: Vec::new(),
                 shown: shown.clone(),
                 depth,
             });
@@ -618,13 +734,16 @@ fn walk(
             // nodes below it carry the leaf of every link in their labels
             let mut prefix = format!("{label}-");
             let mut chain = name.clone();
+            let mut links = vec![name.clone()];
             let mut cur: &Ast = inner;
             while let Ast::Sub { name: n2, inner: i2, .. } = cur {
                 chain = format!("{chain} = {n2}");
+                links.push(n2.clone());
                 prefix = format!("{prefix}1-");
                 cur = i2;
             }
             subs[at].name = chain;
+            subs[at].links = links;
             let mut inner_own = 0u32;
             let root = walk(cur, next, &mut inner_own, &prefix, depth + 1, labels, subs);
             // the root of the spliced tree is, seen from the process that
@@ -646,7 +765,7 @@ fn parse_all(
     // the process being written, when it has a name, heads the chain: a
     // reference to its own name is a cycle at once, saved or not
     let chain = name.map(|n| vec![n.to_string()]).unwrap_or_default();
-    let mut ctx = Ctx { names: Vec::new(), resolver, chain };
+    let mut ctx = Ctx { names: Vec::new(), index: Default::default(), resolver, chain, built: 0, read: 0 };
     let ast = parse_process(&mut sc, &mut ctx, 0)?;
     sc.skip();
     if sc.at != sc.text.len() {
@@ -656,8 +775,13 @@ fn parse_all(
     if names.is_empty() {
         return Err("no impact is named anywhere; name at least one, the dimension being at least one".to_string());
     }
-    let (nodes, tasks) = count(&ast);
+    let (nodes, tasks) = (ast.size().nodes as u32, ast.size().tasks as u32);
     let k = names.len();
+    if tasks as u64 * k as u64 > MAX_CELLS {
+        return Err(format!(
+            "the process assembles to {tasks} tasks over {k} impacts, more than the {MAX_CELLS} values of an instance"
+        ));
+    }
     let mut out = String::new();
     out.push_str(&format!("impact_names: [{}]\n", names.join(", ")));
     out.push_str(&format!("dimensions: {k}\n"));
@@ -698,6 +822,36 @@ pub fn to_yaml_as(
     resolver: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Result<Parsed, String> {
     parse_all(text, Some(name), Some(resolver))
+}
+
+/// The names a text refers to, as the parser reads them: a comment is no
+/// reference, a quoted name is read whole and trimmed, a `[shown]` name is
+/// not looked into. It reads the references alone, with no grammar around
+/// them, so a text that does not parse still has its references, and nothing
+/// is resolved or assembled. A name referred to twice is listed twice.
+pub fn references_of(text: &str) -> Vec<String> {
+    let mut sc = Scanner::new(text);
+    let mut out = Vec::new();
+    while let Some(c) = sc.peek() {
+        sc.at += 1;
+        if c != b'@' {
+            continue;
+        }
+        // an unclosed or an empty name is an error of the grammar, and names
+        // nothing here
+        if let Ok(name) = sc.refname() {
+            out.push(name);
+            let mark = sc.at;
+            sc.skip();
+            if sc.text.get(sc.at) == Some(&b'[') {
+                sc.at += 1;
+                let _ = sc.until_bracket();
+            } else {
+                sc.at = mark;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -790,6 +944,109 @@ mod tests {
         let e = to_yaml_as("(A, 1, {x: 1}) , @Repair", "Repair", &mut r).unwrap_err();
         assert!(e.contains("cycle") && e.contains("Repair > Repair"), "{e}");
         assert!(to_yaml_as("(A, 1, {x: 1}) , @Repair", "Other", &mut r).is_ok());
+    }
+
+    /// A deep term recurses through the parser, and in a thread of the stack
+    /// the server gives its connections, not of the one a test gets.
+    fn with_the_stack_of_a_connection(test: fn()) {
+        std::thread::Builder::new().stack_size(64 << 20).spawn(test).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn the_bound_on_the_depth_holds_of_the_tree_and_across_references() {
+        with_the_stack_of_a_connection(the_bound_on_the_depth);
+    }
+
+    fn the_bound_on_the_depth() {
+        // two thousand folds are the bound, one more is refused
+        let chain = |n: usize| format!("(A, 1, {{x: 1}}){}", ", (A, 1, {x: 1})".repeat(n));
+        assert!(to_yaml(&chain(2000)).is_ok());
+        assert!(to_yaml(&chain(2001)).unwrap_err().contains("deeper"));
+        // a first region deep in choices, under folds that count only the
+        // regions to their right
+        let d = 1950;
+        let comb = format!(
+            "{}(A, 1, {{x: 2}}){}{}",
+            "((A, 1, {x: 1}) ^ ".repeat(d),
+            ")".repeat(d),
+            ", (A, 1, {x: 1})".repeat(d)
+        );
+        assert!(to_yaml(&comb).unwrap_err().contains("deeper"));
+        // the same through a chain of saved processes, each below the bound
+        let mut r = |name: &str| -> Result<String, String> {
+            let i: usize = name[1..].parse().unwrap();
+            if i == 1950 {
+                return Ok("(A, 1, {x: 1})".to_string());
+            }
+            Ok(format!("@p{}{}", i + 1, ", (A, 1, {x: 1})".repeat(1998 - i)))
+        };
+        assert!(to_yaml_with("@p0", &mut r).unwrap_err().contains("deeper"));
+    }
+
+    #[test]
+    fn a_nest_of_loops_is_bounded_through_references_too() {
+        let nest = |n: usize| format!("{}(A, 1, {{x: 1}}){}", "(0.5 ".repeat(n), ")".repeat(n));
+        assert!(to_yaml(&nest(MAX_NEST)).is_ok());
+        assert!(to_yaml(&nest(MAX_NEST + 1)).unwrap_err().contains("nested"));
+        let inner = nest(MAX_NEST);
+        let mut r = |_: &str| Ok(inner.clone());
+        assert!(to_yaml_with("(0.5 @n)", &mut r).unwrap_err().contains("nested"));
+    }
+
+    #[test]
+    fn a_process_that_assembles_past_the_bounds_is_refused_as_it_is_built() {
+        with_the_stack_of_a_connection(a_process_past_the_bounds);
+    }
+
+    fn a_process_past_the_bounds() {
+        // a chain of texts that doubles at every link, thirty links under a
+        // body of a few bytes: the parse ends long before the last one
+        let mut r = |name: &str| -> Result<String, String> {
+            let i: usize = name[1..].parse().unwrap();
+            if i == 0 {
+                return Ok("(A, 1, {x: 1})".to_string());
+            }
+            Ok(format!("@a{}, @a{}", i - 1, i - 1))
+        };
+        let e = to_yaml_with("@a30", &mut r).unwrap_err();
+        assert!(e.contains("nodes"), "{e}");
+        // a balanced text of small references passes the count of the nodes
+        let mut wide = "@t".to_string();
+        for _ in 0..17 {
+            wide = format!("({wide},{wide})");
+        }
+        let mut t = |_: &str| Ok("(A, 1, {x: 1})".to_string());
+        assert!(to_yaml_with(&wide, &mut t).unwrap_err().contains("nodes"));
+        // the padding of the instance file: a large region under a deep comb
+        let region = format!("({})", vec!["(A, 1, {x: 1})"; 2].join(","));
+        let mut b = region.clone();
+        for _ in 0..12 {
+            b = format!("({b},{b})");
+        }
+        let deep = format!("{}{b}{}", "((A, 1, {x: 1}) ^ ".repeat(1900), ")".repeat(1900));
+        assert!(to_yaml(&deep).unwrap_err().contains("megabytes"), "a region of eight thousand tasks under a comb of 1900");
+        // many impacts over many tasks, the one task referred to many times
+        let map: Vec<String> = (0..4000).map(|i| format!("n{i}: 1")).collect();
+        let task = format!("(A, 1, {{{}}})", map.join(", "));
+        let mut b = "@m".to_string();
+        for _ in 0..11 {
+            b = format!("({b},{b})");
+        }
+        let mut m = |_: &str| Ok(task.clone());
+        assert!(to_yaml_with(&b, &mut m).unwrap_err().contains("values"));
+    }
+
+    #[test]
+    fn the_references_of_a_text_are_read_as_the_parser_reads_them() {
+        assert_eq!(references_of("(A, 1, {x: 1})"), Vec::<String>::new());
+        assert_eq!(references_of("@a , @b.c-d[Shown @not this one], @a"), ["a", "b.c-d", "a"]);
+        assert_eq!(references_of("# @comment\n@a # @no\n, @\" spaced # name \"[x]"), ["a", "spaced # name"]);
+        // a name read to its end, as a prefix of another counts for nothing
+        assert_eq!(references_of("@tests2"), ["tests2"]);
+        // the grammar around them does not matter
+        assert_eq!(references_of("(oops @a ) ) @b ("), ["a", "b"]);
+        assert_eq!(references_of("@ @\"\" @\"never closes"), Vec::<String>::new());
+        assert_eq!(references_of("@a [never closes\n@b"), ["a", "b"]);
     }
 
     #[test]
