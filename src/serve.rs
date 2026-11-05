@@ -435,7 +435,14 @@ fn save_process(body: &str, bench: &Bench) -> String {
             }
             entry.1 = text;
         }
-        None => entries.push((name.clone(), text)),
+        None => {
+            // a process saved under the name of an example takes its place
+            // wherever a reference reads it, so the page asks first here too
+            if !overwrite && crate::examples::find(&name).is_some() {
+                return format!("{{\"exists\": true, \"example\": true, \"name\": {}}}", esc(&name));
+            }
+            entries.push((name.clone(), text))
+        }
     }
     match write_store(&bench.saved, &entries) {
         Ok(()) => format!("{{\"ok\": true, \"name\": {}}}", esc(&name)),
@@ -492,9 +499,9 @@ fn load_saved(body: &str, bench: &Bench) -> String {
 
 // -- the examples -------------------------------------------------------------
 
-/// The settings an example is computed with, as three fields of a JSON
-/// object: whether the expected time is a component, the max iterations,
-/// and the names of the components to maximize.
+/// The settings an example is read with, as three fields of a JSON object:
+/// whether the expected time is a component; the max iterations; the names of
+/// the components to maximize.
 fn settings_json(e: &crate::examples::Example) -> String {
     let maximize: Vec<String> = e.maximize.iter().map(|n| esc(n)).collect();
     format!(
@@ -525,23 +532,35 @@ fn examples_list() -> String {
     format!("{{\"examples\": [{}]}}", items.join(", "))
 }
 
-/// One example by its id: the name it is loaded under, its text and its
-/// settings. The examples are constants of the binary, so the id is looked
-/// up in a list and nothing of the request reaches the file system.
-fn load_example(body: &str) -> String {
+/// One example by its id. The answer holds: the name it is loaded under; its
+/// text; its settings; how many loops it has, the max iterations meaning
+/// nothing without one; the names it comes to through its references that a
+/// saved process holds, so that the panel can say what it no longer reads. The
+/// examples are constants of the binary, so the id is looked up in a list and
+/// nothing of the request reaches the file system.
+fn load_example(body: &str, bench: &Bench) -> String {
     let id = match field(body, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
         Some(i) => i,
         None => return err("no example was named"),
     };
-    match crate::examples::find(&id) {
-        Some(e) => format!(
-            "{{\"name\": {}, \"process\": {}, {}}}",
-            esc(e.id),
-            esc(e.text),
-            settings_json(e)
-        ),
-        None => err(&format!("no example is named {id:?}")),
-    }
+    let Some(e) = crate::examples::find(&id) else {
+        return err(&format!("no example is named {id:?}"));
+    };
+    // a store that does not read takes nothing away: the drawing says why
+    let entries = store_entries(bench).unwrap_or_default();
+    let shadowed: Vec<String> = saved_behind(e.text, &entries).iter().map(|n| esc(n)).collect();
+    let loops = parse::to_yaml_as(e.text, e.id, &mut |n: &str| referred(n, &entries))
+        .ok()
+        .and_then(|p| Tree::parse(&p.yaml).ok())
+        .map_or(0, |t| t.loops().len());
+    format!(
+        "{{\"name\": {}, \"process\": {}, {}, \"loops\": {}, \"shadowed\": [{}]}}",
+        esc(e.id),
+        esc(e.text),
+        settings_json(e),
+        loops,
+        shadowed.join(", ")
+    )
 }
 
 fn serve_one(mut stream: TcpStream, bench: &Bench) {
@@ -576,7 +595,7 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
         }
         ("GET", "/api/examples") => send(&mut stream, 200, "application/json", &examples_list()),
         ("POST", "/api/example") => {
-            let out = load_example(&body);
+            let out = load_example(&body, bench);
             send(&mut stream, 200, "application/json", &out)
         }
         ("POST", "/api/frontier") => {
@@ -1052,17 +1071,21 @@ fn diagram(body: &str, bench: &Bench) -> String {
             expanded: expanded.contains(&s.label),
         })
         .collect();
+    // whether a subprocess reads the store or the examples: a link of its
+    // chain that the store holds has taken the place of any example of its name
+    let entries = if parsed.subs.is_empty() { Vec::new() } else { store_entries(bench).unwrap_or_default() };
     let listed_subs: Vec<String> = parsed
         .subs
         .iter()
         .map(|s| {
             format!(
-                "{{\"label\": {}, \"name\": {}, \"shown\": {}, \"depth\": {}, \"expanded\": {}}}",
+                "{{\"label\": {}, \"name\": {}, \"shown\": {}, \"depth\": {}, \"expanded\": {}, \"saved\": {}}}",
                 esc(&s.label),
                 esc(&s.name),
                 esc(&s.shown),
                 s.depth,
-                expanded.contains(&s.label)
+                expanded.contains(&s.label),
+                s.links.iter().any(|l| entries.iter().any(|(n, _)| n == l))
             )
         })
         .collect();
