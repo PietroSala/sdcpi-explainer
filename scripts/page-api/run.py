@@ -75,10 +75,19 @@ What is checked, route by route:
               valid JSON after every step, and read back by a restarted
               server.
   hygiene     a GET on a POST route and an unknown path answer 404 and not a
-              crash; a body of three megabytes is refused and the server
-              lives; a body that is not a form, and one that is not UTF-8;
-              fifty concurrent bounds requests all answer; the server is
+              crash; a body of three megabytes is refused with its reason and
+              the server lives; a body that is not a form, and one that is not
+              UTF-8; fifty concurrent bounds requests all answer; the server is
               alive at the end.
+  limits      what a request may ask: a window or a tolerance mixing parts by
+              name and by position, an exponent past the bound, a term or a
+              chain of saved processes deeper than the parser allows, a process
+              assembled past its bounds from a short text, a nest of loops, the
+              time limit inside a macro step, a request from another origin or
+              host, a request line or a header past the cap, a store that does
+              not read, a pair with no value, a delete of a name referred to
+              in every way the parser reads; each answered at once and the
+              server alive after it.
 
 A failed check is reported with the request and the answer, so that it can
 be replayed by hand. The summary counts the checks made, passed, failed and
@@ -89,6 +98,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -1467,10 +1477,9 @@ def section_hygiene(L, c, args, server):
         text = e.read().decode("utf-8", "replace")
         L.check("a body of 3 MB is refused with 400", e.code == 400 and "larger" in text, "POST /api/svg with 3 MB", f"{e.code} {clip(text, 200)}")
     except (urllib.error.URLError, ConnectionError, socket.timeout, OSError) as e:
-        # the server answers 400 without reading the body, and may close the
-        # socket while the client is still sending; the answer is then lost on
-        # the client side, which is acceptable as long as the server lives
-        L.check("a body of 3 MB is refused (the connection was closed while sending)", True, "POST /api/svg with 3 MB", repr(e))
+        # the server answers 400 and then reads what the client is still
+        # sending, so that the client reads the reason
+        L.check("a body of 3 MB is refused with 400", False, "POST /api/svg with 3 MB", repr(e))
     time.sleep(0.2)
     L.check("the server lives after the 3 MB body", server.alive() and c.get("/api/hello")[0] == 200, "GET /api/hello", None)
     # a body just under the cap is answered as a parse error
@@ -1577,6 +1586,284 @@ def section_hygiene(L, c, args, server):
     L.check("the server is alive at the end", server.alive() and c.get("/api/hello")[0] == 200, "GET /api/hello", None)
 
 
+def rss_of(pid):
+    """The resident memory of a process, in megabytes."""
+    try:
+        return int(subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip() or 0) // 1024
+    except (OSError, ValueError):
+        return 0
+
+
+def hash_of_position(i):
+    """A probability of six digits, another at every position of a text."""
+    return (i * 7919) % 999999 + 1
+
+
+def raw_request(port, head, timeout=10):
+    """One request written by hand, its answer read to the end of the socket."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        s.sendall(head)
+        out = b""
+        while True:
+            data = s.recv(65536)
+            if not data:
+                return out
+            out += data
+    except OSError as e:
+        return out + repr(e).encode()
+    finally:
+        s.close()
+
+
+def section_limits(L, c, args, server, store, work):
+    L.start("limits")
+    port = int(c.base.rsplit(":", 1)[1])
+    # a store of its own: the section counts what is saved
+    server.stop()
+    if os.path.exists(store):
+        os.remove(store)
+    server.start()
+
+    def lives(after):
+        L.check(f"the server lives after {after}", server.alive() and c.get("/api/hello")[0] == 200, "GET /api/hello", None)
+
+    def timed(path, fields, **kw):
+        t0 = time.time()
+        d = c.post(path, fields, **kw)
+        return d, time.time() - t0
+
+    def timed_raw(path, text):
+        """A process sent as it is written, parentheses and at signs being
+        nothing to a form: the body stays the length of the text."""
+        t0 = time.time()
+        status, answer = c.post_raw(path, ("process=" + text).encode(), timeout=60)
+        return json.loads(answer), time.time() - t0
+
+    saved = lambda: json.loads(c.get("/api/saved")[1]).get("saved")
+    tiny = "(A, 1, {a: 1, b: 2})"
+    # a window or a tolerance that mixes the two forms
+    for route in ("/api/frontier", "/api/start", "/api/explain"):
+        for name, value in (("window", "a=0,5;0,5;0,5"), ("window", "0,5;a=0,5;0,5"), ("tolerance", "a=0;0;0")):
+            f = {"process": tiny, name: value, "limit": "2", "workers": "1"}
+            d = c.post(route, f)
+            L.check(f"{route} refuses the {name} {value}", "has no name" in d.get("error", ""), describe(route, f), d)
+            lives(f"{route} with the {name} {value}")
+    f = {"process": tiny, "window": "a=0,5;", "limit": "2", "workers": "1"}
+    d = c.post("/api/frontier", f)
+    L.check("an empty part among parts by name is a part by position, and refused", "has no name" in d.get("error", ""), describe("/api/frontier", f), d)
+    # the forms that stay
+    for name, value, count in (("window", "a=0,5;b=0,5", 1), ("window", "0,5;0,5", 1), ("tolerance", "a=0;b=0", 1), ("tolerance", "0;0", 1)):
+        f = {"process": tiny, name: value, "limit": "2", "workers": "1"}
+        d = c.post("/api/frontier", f)
+        L.check(f"the {name} {value} is read", d.get("status") == "complete" and len(d.get("points", [])) == count, describe("/api/frontier", f), d)
+    # an exponent past the bound reads as no number, at once
+    for name, value in (("window", "a=0,1e100000000"), ("window", "a=0,1e100000000000"), ("window", "a=0,1e-9223372036854775808"), ("window", "a=0,1.5e-9223372036854775808"), ("window", "a=0,1e9223372036854775807"), ("tolerance", "a=1e-100000000")):
+        f = {"process": tiny, name: value, "limit": "1", "workers": "1"}
+        d, seconds = timed("/api/frontier", f, timeout=20)
+        L.check(f"the {name} {value} is answered at once", seconds < 5 and ("error" in d or d.get("status") == "complete"), describe("/api/frontier", f), {"seconds": seconds, "answer": clip(d, 120)})
+    # a term deeper than the parser allows, the folds above a region counted
+    d_ = 1950
+    comb = "((A,1,{x:1})^" * d_ + "(A,1,{x:2})" + ")" * d_ + ",(A,1,{x:1})" * d_
+    for route in ("/api/svg", "/api/bounds", "/api/frontier", "/api/start"):
+        d = c.post(route, {"process": comb, "limit": "2", "workers": "1"}, timeout=60)
+        L.check(f"{route} refuses a tree of 3900 levels", "deeper" in d.get("error", ""), f"POST {route} with a comb of {d_} choices under {d_} folds", clip(d, 200))
+        lives(f"{route} with that tree")
+    # what the parser allows runs on the stacks of the workers
+    d_ = 990
+    comb = "((A,1,{x:1})^" * d_ + "(A,1,{x:2})" + ")" * d_ + ",(A,1,{x:1})" * d_
+    d = c.post("/api/frontier", {"process": comb, "limit": "20", "workers": "2"}, timeout=120)
+    L.check("a tree of 1980 levels is searched", d.get("status") in ("complete", "cut at the limit"), f"POST /api/frontier with a comb of {d_} choices under {d_} folds", clip({k: d.get(k) for k in ("status", "error", "seconds")}, 200))
+    # a chain of saved processes, each under the bound and the whole past it
+    for i in range(30):
+        c.post("/api/save", {"name": f"p{i}", "process": f"@p{i + 1}" + ",(A,1,{x:1})" * 100})
+    c.post("/api/save", {"name": "p30", "process": "(A,1,{x:1})"})
+    for route in ("/api/svg", "/api/bounds", "/api/frontier", "/api/start"):
+        d = c.post(route, {"process": "@p0", "limit": "2", "workers": "1"}, timeout=60)
+        L.check(f"{route} refuses a chain of saved processes past the depth", "deeper" in d.get("error", ""), f"POST {route} with process=@p0", clip(d, 200))
+    d, seconds = timed("/api/save", {"name": "q", "process": "@p0"})
+    L.check("a save of that chain is answered at once", d.get("ok") is True and seconds < 5, "POST /api/save q = @p0", {"seconds": seconds, "answer": d})
+    for i in ["q"] + list(range(31)):
+        c.post("/api/delete", {"name": i if i == "q" else f"p{i}"})
+    L.check("the chain is deleted link by link", saved() == [], "GET /api/saved", saved())
+    # a short text that stands for a very large process: a chain that doubles
+    c.post("/api/save", {"name": "a0", "process": "(A,1,{x:1})"})
+    slowest = 0
+    for k in range(1, 28):
+        d, seconds = timed("/api/save", {"name": f"a{k}", "process": f"@a{k - 1}, @a{k - 1}"})
+        slowest = max(slowest, seconds)
+    L.check("a chain that doubles is saved at once, nothing being assembled", slowest < 2, "POST /api/save a<k> = @a<k-1>, @a<k-1>, k to 27", {"slowest": slowest})
+    d, seconds = timed("/api/svg", {"process": "@a27"}, timeout=60)
+    L.check("it is refused as it is built", "nodes" in d.get("error", "") and seconds < 10, "POST /api/svg with process=@a27", {"seconds": seconds, "answer": clip(d, 200)})
+    L.check("the memory of the server stays small", rss_of(server.proc.pid) < 1024, f"ps -p {server.proc.pid}", rss_of(server.proc.pid))
+    for k in range(27, -1, -1):
+        c.post("/api/delete", {"name": f"a{k}"})
+    # the same through the examples, on an empty store
+
+    def balanced(n, leaf):
+        return leaf if n == 1 else "(" + balanced(n // 2, leaf) + "," + balanced(n - n // 2, leaf) + ")"
+
+    body = balanced(18000, "@stroke")
+    d, seconds = timed_raw("/api/svg", body)
+    L.check("eighteen thousand references to an example are refused as they are built", "nodes" in d.get("error", "") and seconds < 10, "POST /api/svg with a balanced sequence of 18000 @stroke", {"seconds": seconds, "answer": clip(d, 200)})
+    body = "((A,1,{x:1})^" * 1950 + balanced(400, "@stroke") + ")" * 1950
+    d, seconds = timed_raw("/api/svg", body)
+    L.check("references to an example deep in a comb are refused by what the instance file would take", "megabytes" in d.get("error", "") and seconds < 10, "POST /api/svg with 400 @stroke under 1950 choices", {"seconds": seconds, "answer": clip(d, 200)})
+    L.check("the memory of the server stays small after them", rss_of(server.proc.pid) < 1024, f"ps -p {server.proc.pid}", rss_of(server.proc.pid))
+    # the process field of an explanation is held to the cap of every route
+    long_text = balanced(80000, "(A,1,{x:1})")
+    d = c.post("/api/explain", {"process": long_text, "decisions": ""}, timeout=60)
+    L.check("an explanation refuses a process past the cap", "longer" in d.get("error", ""), f"POST /api/explain with a process of {len(long_text)} bytes", clip(d, 200))
+    # a nest of loops: past the bound it is refused, under it the limit holds
+    # inside the macro step and what the branches hold has a cap
+    nest = lambda n: "(0.5 " * n + "(A, 1, {x: 1})" + ")" * n
+    for route in ("/api/svg", "/api/bounds", "/api/frontier", "/api/start"):
+        d = c.post(route, {"process": nest(17), "limit": "1", "workers": "1", "max_iter": "2"})
+        L.check(f"{route} refuses a nest of seventeen loops", "nested" in d.get("error", ""), f"POST {route} with a nest of 17", clip(d, 200))
+    d, seconds = timed("/api/bounds", {"process": nest(16), "max_iter": "50"})
+    L.check("the bounds of a nest of sixteen answer at once", "upper" in d and seconds < 5, "POST /api/bounds with a nest of 16", {"seconds": seconds, "answer": clip(d, 120)})
+    for n, limit in ((5, 2), (10, 2), (16, 2)):
+        d, seconds = timed("/api/frontier", {"process": nest(n), "limit": str(limit), "workers": "1", "max_iter": "2"}, timeout=120)
+        L.check(f"the limit of {limit} s holds on a nest of {n} loops", d.get("status") == "cut at the limit" and seconds < limit + 10, f"POST /api/frontier with a nest of {n} at max iterations 2", {"seconds": seconds, "status": d.get("status"), "error": d.get("error")})
+    # twenty four draws in a row, no choice between them: the macro step past
+    # what its branches may hold fails, and says why
+    natures = ",".join(["((A,1,{x:1})^[0.5](B,1,{x:2}))"] * 24)
+    d, seconds = timed("/api/frontier", {"process": natures, "limit": "120", "workers": "1"}, timeout=200)
+    L.check("a macro step past its cap fails, saying why", d.get("status") == "failed" and "macro step" in d.get("note", "") and d.get("points") == [], "POST /api/frontier with 24 draws in a row", {"seconds": seconds, "status": d.get("status"), "note": d.get("note"), "error": d.get("error")})
+    # the rationals grow long along a nest of draws with long probabilities,
+    # and across loops with distinct ones: the limit holds inside the bounds
+    natures = "(A,1,{x:1})"
+    for i in range(1950):
+        natures = "((A,1,{x:%d})^[0.%06d]%s)" % (i % 9 + 1, (i * 7919) % 999999 + 1, natures)
+    d, seconds = timed("/api/frontier", {"process": natures, "limit": "2", "workers": "1"}, timeout=120)
+    L.check("the limit holds inside the two bounds at the start", "did not end within the time limit" in d.get("error", "") and seconds < 15, "POST /api/frontier with a nest of 1950 draws", {"seconds": seconds, "answer": clip(d, 160)})
+    d, seconds = timed("/api/bounds", {"process": natures}, timeout=120)
+    L.check("the bounds of the page have their own time", "take longer than" in d.get("error", "") and seconds < 40, "POST /api/bounds with a nest of 1950 draws", {"seconds": seconds, "answer": clip(d, 160)})
+    loops = balanced(8000, "(0.%06d (A,1,{x:1}))")
+    loops = re.sub("%06d", lambda m: "%06d" % (hash_of_position(m.start())), loops)
+    d, seconds = timed_raw("/api/frontier", loops + "&limit=2&workers=1&max_iter=2")
+    L.check("the limit holds inside the two bounds of a state", d.get("status") == "cut at the limit" and seconds < 15, "POST /api/frontier with 8000 loops of distinct probabilities", {"seconds": seconds, "status": d.get("status"), "error": d.get("error")})
+    L.check("the server answers another search right after them", c.post("/api/frontier", {"process": tiny, "limit": "2", "workers": "1"}, timeout=60).get("status") == "complete", "POST /api/frontier", None)
+    # a request from another origin, or to another host
+    form = urllib.parse.urlencode({"name": "from_elsewhere", "process": "(Z, 1, {z: 1})"}).encode()
+
+    def head(path, *headers, body=form):
+        lines = [f"POST {path} HTTP/1.1"] + list(headers) + [f"Content-Length: {len(body)}", "Content-Type: application/x-www-form-urlencoded", "", ""]
+        return "\r\n".join(lines).encode() + body
+
+    here = f"127.0.0.1:{port}"
+    for label, headers in [
+        ("an Origin of another site", [f"Host: {here}", "Origin: https://elsewhere.example"]),
+        ("an Origin of another port", [f"Host: {here}", "Origin: http://127.0.0.1:1"]),
+        ("an Origin of another name of the machine", [f"Host: {here}", f"Origin: http://localhost:{port}"]),
+        ("the Origin null", [f"Host: {here}", "Origin: null"]),
+        ("a Host of another site", ["Host: elsewhere.example"]),
+        ("a Host and an Origin of another site", ["Host: elsewhere.example", "Origin: https://elsewhere.example"]),
+    ]:
+        out = raw_request(port, head("/api/save", *headers))
+        L.check(f"{label} is refused with 403", out.startswith(b"HTTP/1.1 403"), f"POST /api/save with {headers}", out[:120])
+    L.check("the refusals left the store as it was", saved() == [], "GET /api/saved", saved())
+    out = raw_request(port, b"GET /api/saved HTTP/1.1\r\nHost: elsewhere.example\r\n\r\n")
+    L.check("a GET to a Host of another site is refused with 403", out.startswith(b"HTTP/1.1 403"), "GET /api/saved with Host: elsewhere.example", out[:120])
+    for label, headers in [
+        ("the page itself", [f"Host: {here}", f"Origin: http://{here}"]),
+        ("the page under the name localhost", [f"Host: localhost:{port}", f"Origin: http://localhost:{port}"]),
+        ("a tunnel to another port", ["Host: localhost:9000", "Origin: http://localhost:9000"]),
+        ("a request with no Origin", [f"Host: {here}"]),
+    ]:
+        out = raw_request(port, head("/api/svg", *headers, body=b"process=(A,1,{x:1})"))
+        L.check(f"{label} is answered", out.startswith(b"HTTP/1.1 200") and b"svg" in out, f"POST /api/svg with {headers}", out[:120])
+    # the request line and the headers have a cap
+    before = rss_of(server.proc.pid)
+    for label, data in [("a header", b"GET / HTTP/1.1\r\nX: " + b"a" * (1 << 20)), ("a request line", b"GET /" + b"a" * (1 << 20)), ("many headers", b"GET / HTTP/1.1\r\n" + b"X: a\r\n" * (1 << 17))]:
+        out = raw_request(port, data)
+        L.check(f"{label} past the cap is refused with its reason", out.startswith(b"HTTP/1.1 400") and b"longer" in out, f"{label} of a megabyte", out[:120])
+    L.check("the memory does not grow by what was sent", rss_of(server.proc.pid) - before < 64, f"ps -p {server.proc.pid}", [before, rss_of(server.proc.pid)])
+    # a body past the cap: the client reads the reason
+    body = b"process=" + b"a" * 300000
+    try:
+        status, text = c.post_raw("/api/svg", body)
+        L.check("a body past the cap is answered 400", False, "POST /api/svg with 300 KB", f"{status} {clip(text, 100)}")
+    except urllib.error.HTTPError as e:
+        text = e.read().decode("utf-8", "replace")
+        L.check("a body past the cap is refused with its reason", e.code == 400 and "larger than the 262144 bytes" in text, "POST /api/svg with 300 KB", f"{e.code} {clip(text, 100)}")
+    except OSError as e:
+        L.check("a body past the cap is refused with its reason", False, "POST /api/svg with 300 KB", repr(e))
+    # a pair with no value hides nothing after it
+    status, text = c.post_raw("/api/example", b"x&id=release")
+    L.check("a pair with no value hides nothing after it", '"name": "release"' in text, "POST /api/example with x&id=release", clip(text, 100))
+    # a store that does not read: only a reference reads it, and the error names it
+    with open(store, "w") as fh:
+        fh.write("this is not a store")
+    try:
+        for eid in ("coin", "tests", "transport"):
+            text = c.post("/api/example", {"id": eid}).get("process", "")
+            d = c.post("/api/svg", {"process": text})
+            L.check(f"the text of {eid}, whose comments may mention a reference, draws without reading the store", "svg" in d, f"POST /api/svg with the text of {eid} and a broken store", clip(d, 200))
+        d = c.post("/api/svg", {"process": "@tests"})
+        L.check("a reference reads the store, and the error names it", store in d.get("error", "") and "brace" in d.get("error", ""), "POST /api/svg with @tests and a broken store", d)
+    finally:
+        os.remove(store)
+    L.check("the store is back", saved() == [], "GET /api/saved", saved())
+    # a delete sees the references as the parser reads them
+    c.post("/api/save", {"name": "mine", "process": "(Mine, 1, {zzz: 1})"})
+    for label, text in [("a quoted name with spaces", '@" mine "'), ("a reference behind a name with a #", '@"x#y", @mine'), ("a shown name", "@mine[Shown]"), ("a line after a comment", "# nothing\n@mine")]:
+        c.post("/api/save", {"name": "user", "process": text, "overwrite": "1"})
+        d = c.post("/api/delete", {"name": "mine"})
+        L.check(f"a delete is refused for {label}", d.get("error", "").startswith("not deleted: mine is referred to by user"), f"delete mine, with user = {text}", d)
+    c.post("/api/save", {"name": "user", "process": "# @mine\n(Z, 1, {z: 1})", "overwrite": "1"})
+    d = c.post("/api/delete", {"name": "mine"})
+    L.check("a mention in a comment does not hold a delete", d.get("ok") is True, "delete mine, with user = # @mine", d)
+    c.post("/api/delete", {"name": "user"})
+    L.check("the section leaves the store empty", saved() == [], "GET /api/saved", saved())
+    # the command line reads a store the page wrote
+    c.post("/api/save", {"name": "my", "process": "@tests, (A, 1, {x: 1})"})
+    code, out, errtext = cli(args.bin, ["parse", "@my", "--saved", store])
+    L.check("parse --saved reads a store whose text relies on an example", code == 0 and "impact_names" in out, f"sdcpi parse @my --saved {store}", errtext or out[:100])
+    code, out, errtext = cli(args.bin, ["parse", "@nowhere", "--saved", store])
+    L.check("parse --saved names what it did not find", code != 0 and "nowhere" in errtext, f"sdcpi parse @nowhere --saved {store}", errtext)
+    code, out, errtext = cli(args.bin, ["parse", "@tests"])
+    L.check("parse with no --saved refuses a reference", code != 0 and "--saved" in errtext, "sdcpi parse @tests", errtext)
+    c.post("/api/delete", {"name": "my"})
+    lives("the section")
+
+
+def section_fresh_clone(L, args, work):
+    """What the panel of the benchmark answers on a fresh clone: the generator
+    beside the tree of the executable, and neither checkout beside it. Both
+    grids answer with what to run, in place of the traceback of the generator.
+    The server of the suite is gone by now, and this one takes its port."""
+    L.start("fresh clone")
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storm-comparison-ablation")
+    generator = os.path.join(source, "make_bpmn_cpi.py")
+    if not os.path.isfile(generator):
+        L.skip("fresh clone", "no generator beside the scripts of this suite")
+        return
+    root = os.path.join(work, "fresh-clone")
+    shutil.rmtree(root, ignore_errors=True)
+    scripts = os.path.join(root, "scripts", "storm-comparison-ablation")
+    os.makedirs(scripts)
+    os.makedirs(os.path.join(root, "target", "release"))
+    for name in ("make_bpmn_cpi.py", "experiment_base.py"):
+        shutil.copy(os.path.join(source, name), scripts)
+    binary = os.path.join(root, "target", "release", "sdcpi")
+    shutil.copy(args.bin, binary)
+    port = args.port
+    server = Server(binary, port, os.path.join(root, "store.json"), None, os.path.join(root, "server.log"))
+    try:
+        server.start()
+        c = Client(port)
+        hello = json.loads(c.get("/api/hello")[1])
+        L.check("a fresh clone shows the panel of the benchmark and not the switch of the loops", hello.get("bench") is True and hello.get("loops") is False, "GET /api/hello", hello.get("bench"))
+        base = {"nested": 1, "independent": 1, "process": 1, "impacts": 2, "mode": "random"}
+        for label, f in (("a process without loops", base), ("a process with loops", dict(base, loops=1))):
+            d = c.post("/api/bench", f)
+            L.check(f"{label} answers what to run", "setup.py --bench-only" in d.get("error", "") and "Traceback" not in d.get("error", ""), describe("/api/bench", f), d)
+    finally:
+        server.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # -- main ------------------------------------------------------------------------
 
 
@@ -1590,7 +1877,7 @@ def main():
     ap.add_argument("--work", default=None, help="the scratch folder (default: a fresh temporary folder)")
     ap.add_argument("--keep", action="store_true", help="keep the scratch folder when it was temporary")
     ap.add_argument("--verbose", action="store_true", help="print every passed check too")
-    ap.add_argument("--only", default=None, help="comma-separated sections to run: hello,bench,examples,svg,bounds,frontier,lifecycle,saved,hygiene")
+    ap.add_argument("--only", default=None, help="comma-separated sections to run: hello,bench,examples,svg,bounds,frontier,lifecycle,saved,hygiene,limits,fresh")
     args = ap.parse_args()
 
     binary = os.path.abspath(args.bin)
@@ -1649,6 +1936,8 @@ def main():
             section_saved(L, c, args, server, store)
         if wanted("hygiene"):
             section_hygiene(L, c, args, server)
+        if wanted("limits"):
+            section_limits(L, c, args, server, store, work)
     except Exception as e:
         import traceback
 
@@ -1659,6 +1948,11 @@ def main():
         server.stop()
     if not alive:
         L.check("the server was alive when the suite ended", False, "the run", f"see {log}")
+    if wanted("fresh"):
+        try:
+            section_fresh_clone(L, args, work)
+        except Exception as e:
+            L.check(f"the section of a fresh clone ran to the end ({type(e).__name__}: {e})", False, "the run", None)
 
     print(f"\nchecks {L.checks}  passed {L.passed}  failed {L.failed}  skipped {L.skipped}")
     if L.findings:
@@ -1670,8 +1964,6 @@ def main():
         json.dump({"checks": L.checks, "passed": L.passed, "failed": L.failed, "skipped": L.skipped, "findings": L.findings}, f, ensure_ascii=False, indent=2)
     print(f"report  {report}")
     if not args.work and not args.keep and L.failed == 0:
-        import shutil
-
         shutil.rmtree(work, ignore_errors=True)
     return 0 if L.failed == 0 else 1
 
