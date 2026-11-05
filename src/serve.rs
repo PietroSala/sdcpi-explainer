@@ -1905,3 +1905,79 @@ fn stop(body: &str) -> String {
         Err(e) => err(&e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(n, t)| (n.to_string(), t.to_string())).collect()
+    }
+
+    #[test]
+    fn a_cycle_is_found_behind_what_does_not_read() {
+        let empty = store(&[]);
+        // through an example, the release referring to its tests
+        assert!(closes_a_cycle("@release", "tests", &empty).unwrap().contains("tests > release > tests"));
+        // behind a name nobody saved, and behind a text that does not parse
+        assert!(closes_a_cycle("@nowhere, @release", "tests", &empty).is_some());
+        assert!(closes_a_cycle("(oops @release", "tests", &empty).is_some());
+        let broken = store(&[("broken", "(oops")]);
+        assert!(closes_a_cycle("@broken, @release", "tests", &broken).is_some());
+        // a longer chain through the store, named link by link
+        let chain = store(&[("a", "@b"), ("b", "@c")]);
+        assert_eq!(closes_a_cycle("@a", "c", &chain).unwrap(), "the references form a cycle: c > a > b > c");
+        assert!(closes_a_cycle("@a", "z", &chain).is_none());
+        // a cycle the store holds already and that does not pass through the
+        // name is no reason to refuse, and the walk ends
+        let looped = store(&[("a", "@b"), ("b", "@a")]);
+        assert!(closes_a_cycle("@a", "z", &looped).is_none());
+        // the words of the message are a name like any other
+        assert!(closes_a_cycle("@\"form a cycle\"", "v", &empty).is_none());
+    }
+
+    #[test]
+    fn the_referrers_of_a_name_are_read_as_the_parser_reads_them() {
+        let entries = store(&[
+            ("plain", "@mine"),
+            ("quoted", "@\" mine \""),
+            ("after", "@\"x#y\", @mine"),
+            ("shown", "@mine[Shown]"),
+            ("comment", "# @mine\n(A, 1)"),
+            ("prefix", "@mine2"),
+            ("inside", "@x[@mine]"),
+        ]);
+        assert_eq!(referrers("mine", &entries), ["plain", "quoted", "after", "shown"]);
+    }
+
+    #[test]
+    fn what_a_text_comes_to_in_the_store_is_read_through_the_examples() {
+        let entries = store(&[("tests", "(A, 1, {x: 1})"), ("other", "(B, 1, {x: 1})")]);
+        assert_eq!(saved_behind(crate::examples::find("release").unwrap().text, &entries), ["tests"]);
+        assert_eq!(saved_behind("@release, @other", &entries), ["other", "tests"]);
+        assert_eq!(saved_behind(crate::examples::find("coin").unwrap().text, &entries), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_request_comes_from_the_page_of_the_server_it_asks() {
+        let here = Some("127.0.0.1:8080");
+        assert!(from_this_page(None, None));
+        assert!(from_this_page(here, None));
+        assert!(from_this_page(here, Some("http://127.0.0.1:8080")));
+        assert!(from_this_page(Some("localhost:9000"), Some("http://localhost:9000")));
+        assert!(from_this_page(None, Some("http://localhost:8080")));
+        assert!(!from_this_page(Some("elsewhere.example"), None));
+        assert!(!from_this_page(Some("elsewhere.example:8080"), Some("http://elsewhere.example:8080")));
+        assert!(!from_this_page(here, Some("https://elsewhere.example")));
+        assert!(!from_this_page(here, Some("http://127.0.0.1:1")));
+        assert!(!from_this_page(here, Some("http://localhost:8080")));
+        assert!(!from_this_page(here, Some("null")));
+    }
+
+    #[test]
+    fn a_field_is_found_behind_a_pair_with_no_value() {
+        assert_eq!(field("x&id=release", "id").as_deref(), Some("release"));
+        assert_eq!(field("id=a&id=b", "id").as_deref(), Some("a"));
+        assert_eq!(field("x", "id"), None);
+    }
+}
