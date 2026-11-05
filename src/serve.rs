@@ -932,6 +932,9 @@ fn hello(bench: &Bench) -> String {
     )
 }
 
+/// What the benchmark on disk asks for when it is not there.
+const SETUP: &str = "run python3 scripts/storm-comparison-ablation/setup.py --bench-only";
+
 /// An instance of the benchmark as text for the page: the four coordinates
 /// and the mode are checked against the grid, the path is built from them
 /// under the folder of the instances, an instance not on disk is drawn by
@@ -970,7 +973,10 @@ fn load_bench(body: &str, bench: &Bench) -> String {
     // the branch with loops of the benchmark
     let loops = matches!(field(body, "loops").as_deref(), Some("1") | Some("true"));
     if loops && !bench.loops_available() {
-        return err("the instances with loops are not on disk and the generator has no checkout of the branch loops beside it");
+        return err(&match &bench.generator {
+            Some(_) => format!("the instances with loops are not on disk and the checkout of the branch loops of the benchmark is not beside the generator: {SETUP}"),
+            None => "the instances with loops are not on disk and no generator is beside this executable".to_string(),
+        });
     }
     let key = if loops { format!("{n}-{i}-{k}-{d}-{mode}-loops") } else { format!("{n}-{i}-{k}-{d}-{mode}") };
     let folder = if loops { &bench.loops } else { &bench.instances };
@@ -985,6 +991,14 @@ fn load_bench(body: &str, bench: &Bench) -> String {
                 "the instance {key} is not on disk and no generator is beside this executable"
             ));
         };
+        // the generator reads the shapes in the checkouts beside it, a process
+        // with loops its shapes in one and the modes of its impacts in the other
+        let beside = |folder: &str| generator.parent().map_or(false, |d| d.join(folder).is_dir());
+        if !beside("process-impact-benchmarks") || (loops && !beside("process-impact-benchmarks-loops")) {
+            return err(&format!(
+                "the instance {key} is not on disk and the checkout of the benchmark is not beside the generator: {SETUP}"
+            ));
+        }
         let mut command = std::process::Command::new("python3");
         command
             .arg(generator)
