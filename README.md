@@ -1,10 +1,11 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.5
+**Pietro Sala** — Version 0.6
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
-terms; `examples/` holds two instances to explore it with.
+terms; `examples/` holds two instances to explore it with, and the
+processes of the paper and of the thesis, listed under Examples below.
 `scripts/storm-comparison-ablation/` holds its test suite: a large
 differential campaign that confronts the tool with the Storm model
 checker and with three ablated configurations of its own search,
@@ -44,11 +45,42 @@ lower to upper per component, and the table carries the upper increments in
 a column "loops" of its own. The panel
 that loads a process of the benchmark has a switch "Loops", shown when the
 server has the grid with loops (`--bench-loops DIR`, see `LOOPS.md`): the
-same coordinates then come from the benchmark with loops. The
+same coordinates then come from the benchmark with loops. The panel
+"Examples", between the saved processes and the benchmark, lists the
+processes of the paper and of the thesis and loads one with one click, the
+expected time, the max iterations and the directions set as its document
+has them and the bounds on the expected values and the tolerances back at
+their start: see Examples below. The
 server is in the binary, so there is nothing to install beyond what is
 already there, it runs on the three desktop systems and inside a container
 alike, and it binds `127.0.0.1` and never every address, because it runs a
 computation for whoever asks.
+
+The panel of the benchmark needs the benchmark on disk, and a fresh clone
+does not have it. The panel is shown when the generator,
+`scripts/storm-comparison-ablation/make_bpmn_cpi.py`, sits beside the tree
+of the executable, as it does when `sdcpi` runs from `target/release/` of a
+clone, or when a folder of instances is there (`--bench DIR`, or the
+environment `SDCPI_BENCH`, by default
+`scripts/pareto-frontier/experiment/instances`); an instance that is not on
+disk is drawn by the generator, which wants `python3` on the path with
+numpy, scipy and matplotlib, and is kept in that folder. So on a fresh
+clone the panel is shown and loads nothing, the generator failing for want
+of the shapes of the benchmark, until this has run once:
+
+    python3 scripts/storm-comparison-ablation/setup.py
+
+The script clones process-impact-benchmarks at its pinned commit into
+`scripts/storm-comparison-ablation/process-impact-benchmarks`, which is
+what the processes without loops need: the thousand shapes and the modes
+of the impacts. It clones the branch `loops` of the same repository,
+pinned too, into `process-impact-benchmarks-loops` beside the first, which
+is what the processes with loops need on top of the first clone, whose
+modes of the impacts they take; the switch "Loops" is shown once that
+folder is there, or a folder of instances with loops (`--bench-loops DIR`,
+or the environment `SDCPI_BENCH_LOOPS`, by default the folder of the
+instances with `-loops` after its name). The script also unpacks the
+recorded campaign of the first suite, which the panel does not read.
 
 The plot is one graph per direction present, the minimized components
 and the maximized ones apart: a group of two impacts is drawn in the
@@ -88,6 +120,49 @@ Stop cuts the search, which then answers as at its time limit, with what it
 found and the certificate of the cut. A search started while one runs cuts
 the one before.
 
+
+## Examples
+
+`examples/` holds the processes of the paper "Explaining Strategies for
+Expected Impacts" and of the PhD thesis "Synthesizing Strategies for
+Quantitative Processes", each a file in the grammar of `parse` that opens
+with a comment saying what it is and where it appears. They are built into
+the binary too: the page lists them in its panel "Examples" and loads one
+with the settings its document computes it with, which are the options of
+the command line, `--time 1` for the expected time, `--max-iter K` for the
+max iterations and `--maximize` for the components maximized.
+
+| example | file | where it appears | expected time | max iterations | maximized | frontier |
+|---|---|---|---|---|---|---|
+| `release` | `release.cpi` | the paper, Example 1 and Figure 1, the running example | off | 2 | | 1937 points |
+| `tests` | `tests.cpi` | the paper, the subprocess of the release | off | 2 | | 2 points |
+| `coin` | `coin.cpi` | the paper, Proposition 3 | off | 1 | | 3 points |
+| `winery` | `winery.cpi` | the thesis, the motivation chapter, first scenario | off | 1 | `points` | 7 points |
+| `stroke` | `stroke.cpi` | the thesis, the motivation chapter, second scenario | on | 1 | | 12 points |
+| `transport` | `transport.cpi` | the thesis, the subprocess of the stroke | on | 1 | | 2 points |
+| `release-nested` | `release-nested.cpi` | the thesis, the motivation chapter, third scenario | on | 2 | | 1024 points |
+| `line` | `line-thesis.cpi` | the thesis, the chapter on the semantics, the running example | off | 1 | | 4 points |
+| `loop-choice` | `loop-choice.cpi` | the thesis, the chapter on time and loops | off | 2 | | 4 points |
+| `quantile` | `quantile.cpi` | the thesis, the section on the quantile queries | off | 1 | | 1 point |
+
+The release refers to its tests as `@tests` and the stroke to its transport
+as `@transport`. `examples/store.json` holds the two subprocesses in the
+shape of the store of the page, so the release of the paper is built and
+computed from the command line by
+
+```sh
+./target/release/sdcpi parse --file examples/release.cpi --saved examples/store.json --out release.yaml
+./target/release/sdcpi pareto release.yaml --max-iter 2
+```
+
+and the second command reports the 1937 points of its frontier. On the
+page a reference that the store of the saved processes does not hold is
+read among the examples, so the release and the stroke draw with nothing
+saved, and a process saved under the name of an example takes its place.
+`line-thesis.cpi` is the metal line as the thesis writes it, nine tasks,
+its sequences nested to the right and a choice between two paintings at
+its end; `line.cpi`, used further down, is a miniature of it with eight
+tasks.
 
 ## Explaining a strategy
 
@@ -314,9 +389,11 @@ process with its identifiers in-order over the whole; the page shows every
 node under the identifier of the process that wrote it, prefixed by the
 identifiers of the references that led there, `7-3` for the node 3 of the
 process the leaf 7 refers to, and draws every saved process as one box
-until it is expanded. On the command line `parse --saved F` resolves the
+until it is expanded. On the page a name that the store does not hold is
+read among the examples of the section above, a saved process of the same
+name coming first. On the command line `parse --saved F` resolves the
 references against the store `F` the page writes, `sdcpi-processes.json` by
-default.
+default, or against `examples/store.json`.
 
 A comma between regions is a sequence, as in the grammar of the model,
 and it associates to the left: `A, B, C` means `(A, B), C`, the tree
@@ -511,8 +588,8 @@ failed, and says the rest in its `--help`:
 | `mirror-agreement` | the loop tool against the mirror on processes without loops, random and from the benchmark, command by command (`--loop`, `--mirror`, `--bench`) |
 | `fuzz` | random and mutated texts, instance files and request bodies: never a panic, a hang, a crash or an answer out of contract, on the command line and on the page (`--port`) |
 | `storm-directions` | Storm as an outside referee: the optima of every component, the frontier with directions and the achievability of budgets |
-| `page-api` | every route of the page server, the lifecycle of a search, the saved processes and their references, the hygiene of the server (`--port`, `--bench`) |
-| `page-ui` | the page driven in a headless browser through Playwright for Python, a screenshot per step (`--port`, `--bench`, `--shots DIR`), console errors counted as defects |
+| `page-api` | every route of the page server, the lifecycle of a search, the saved processes and their references, the examples with their settings and the frontier each document reports, the hygiene of the server (`--port`, `--bench`) |
+| `page-ui` | the page driven in a headless browser through Playwright for Python, the panel of the examples among its steps, a screenshot per step (`--port`, `--bench`, `--shots DIR`), console errors counted as defects |
 | `harness-wide` | the exact harness of the loops over hundreds of random processes, the directed frontier against its oracle, the gap test |
 | `tolerance` | the frontier within tolerances: every strategy within them of a point found, no two points reported within them of each other, exact again at zero |
 | `explainer` | the explainer end to end on its outputs alone: every decision the leaf of its tree, the process walked by the trees paying the exact value, the fewest tests against an exhaustive search, the page equal to the command line, and the readings of the impacts (`--port`) |
