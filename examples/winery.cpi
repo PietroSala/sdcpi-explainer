@@ -1,0 +1,6 @@
+# The winery, the first scenario of the motivation chapter of the thesis: the
+# barrels are ordered before the harvest, the harvest draws rot or not, then
+# the grapes are sorted while the cellar is prepared; the points are maximized.
+((NewOak, 2, {euro: 2400, points: 3}) ^ (UsedOak, 1, {euro: 600, points: 1})) ,
+((Rotten, 4, {euro: 3500, points: 1}) ^[0.3] (Sound, 3, {euro: 3000, points: 3})) ,
+(((Hand, 2, {euro: 1200, points: 3}) ^ (Optical, 1, {euro: 400, points: 1})) || (Cellar, 2, {euro: 1000}))

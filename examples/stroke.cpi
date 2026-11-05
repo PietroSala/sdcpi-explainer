@@ -1,0 +1,8 @@
+# The stroke pathway, the second scenario of the motivation chapter of the
+# thesis: the transport is the subprocess @transport, used twice, and the
+# expected time is a component of the frontier.
+@transport[Pickup],
+( (CT, 20, {euro: 300}) || (Labs, 30, {euro: 100}) ),
+( ( ( (Referral, 5, {euro: 20}), @transport[Transfer], (Thrombectomy, 60, {euro: 6000, disability: 1}) ) ^ (Lysis, 60, {euro: 1000, disability: 3}) )
+  ^[0.3]
+  (Lysis, 60, {euro: 1000, disability: 1}) )

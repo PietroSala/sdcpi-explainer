@@ -1,0 +1,4 @@
+# The example of the section on the quantile queries of the thesis: a choice
+# between two draws of nature, the first between T1 and T2, the second between
+# T3 and T4; the two components of the impact are named a and b.
+( ( (T1, 1, {a: 1000000, b: 1000000}) ^[0.1] (T2, 1, {a: 1, b: 2}) ) ^ ( (T3, 1, {a: 3, b: 2}) ^[0.5] (T4, 1, {a: 1, b: 3}) ) )

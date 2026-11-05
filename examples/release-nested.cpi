@@ -1,0 +1,9 @@
+# The software release of the thesis, the third scenario of its motivation
+# chapter: the rounds of review, an outer loop, the fix decided after the
+# finding, and the tests run again, a loop inside the loop.
+(0.25 (Review, 1, {hours: 4}),
+      ( ( (Major, 1, {hours: 6}), ( (HouseMajor, 1, {hours: 24}) ^ (VendorMajor, 3, {euro: 2000, hours: 2}) ) )
+        ^[0.4]
+        ( (Minor, 1, {hours: 2}), ( (HouseMinor, 1, {hours: 8}) ^ (VendorMinor, 2, {euro: 500, hours: 1}) ) ) ),
+      (0.3 (Tests, 1, {euro: 40, hours: 2})) ),
+(Ship, 1, {hours: 4})
