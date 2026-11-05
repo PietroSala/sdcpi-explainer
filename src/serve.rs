@@ -20,8 +20,12 @@
 //! What guards it, since it runs a computation on request:
 //!   * it binds `127.0.0.1` and never `0.0.0.0`, so nothing outside the
 //!     machine reaches it;
-//!   * the request body is capped, and a request larger than the cap is
-//!     refused before it is read;
+//!   * a browser on the machine is inside that address, so a request whose
+//!     `Host` is no name of the loopback, or whose `Origin` is not the page
+//!     it asks, is refused: a page open on any other site could otherwise
+//!     rewrite the store or start a search;
+//!   * the request line and the headers are capped, and so is the body, a
+//!     request larger than the cap being refused before its body is read;
 //!   * the socket carries a read timeout, so a client that opens a
 //!     connection and says nothing does not hold the server;
 //!   * the search is given a time limit that the page cannot remove, because
@@ -57,6 +61,13 @@ const MAX_BODY: usize = 256 * 1024;
 /// it is a strategy of.
 const MAX_EXPLAIN_BODY: usize = 64 * 1024 * 1024;
 const MAX_LIMIT: f64 = 600.0;
+/// The request line and the headers together: nothing the page sends comes
+/// near it, and a connection that goes on sending past it is refused.
+const MAX_HEAD: u64 = 64 * 1024;
+/// What is read and dropped of a body refused, and for how long, so that the
+/// client that is still sending it reads the reason and not a closed socket.
+const MAX_DRAIN: usize = 64 * 1024 * 1024;
+const DRAIN_TIME: Duration = Duration::from_secs(5);
 
 const EXAMPLE: &str = "\
 ( (Intake, 1, {euro: 10, hours: 2})
@@ -522,7 +533,10 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(60)));
     let (method, path, body) = match request(&mut stream) {
         Ok(v) => v,
-        Err(e) => return send(&mut stream, 400, "text/plain; charset=utf-8", &e),
+        Err((code, reason)) => {
+            send(&mut stream, code, "text/plain; charset=utf-8", &reason);
+            return drain(&mut stream);
+        }
     };
     match (method.as_str(), path.as_str()) {
         ("GET", "/") => send(&mut stream, 200, "text/html; charset=utf-8", PAGE),
@@ -581,45 +595,99 @@ fn serve_one(mut stream: TcpStream, bench: &Bench) {
     }
 }
 
+/// Whether a request may be answered. A browser sends the two headers on its
+/// own and a page cannot forge them: the host it asks for has to be a name of
+/// the loopback, against a page of another site that made its own name resolve
+/// here, and the origin, when there is one, has to be the page that host
+/// serves, against a page of another site or of another port. The port of the
+/// host is not looked at, a tunnel being free to put this server behind another.
+fn from_this_page(host: Option<&str>, origin: Option<&str>) -> bool {
+    let loopback = |authority: &str| matches!(authority.rsplit_once(':').map_or(authority, |(n, _)| n), "127.0.0.1" | "localhost");
+    host.map_or(true, loopback)
+        && origin.map_or(true, |o| match (o.strip_prefix("http://"), host) {
+            (Some(page), Some(h)) => page == h,
+            (Some(page), None) => loopback(page),
+            (None, _) => false,
+        })
+}
+
 /// The method, the path and the body of one request. Nothing else of HTTP is
-/// read, because nothing else is answered.
-fn request(stream: &mut TcpStream) -> Result<(String, String, String), String> {
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+/// read, because nothing else is answered; the status and the reason when the
+/// request is refused.
+fn request(stream: &mut TcpStream) -> Result<(String, String, String), (u16, String)> {
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| (400, e.to_string()))?);
+    // the request line and the headers read through a cap: a line grows until
+    // its newline arrives, and the read timeout does not fire while bytes keep
+    // coming
+    let too_long = || (400, format!("the request line and the headers are longer than the {MAX_HEAD} bytes accepted\n"));
+    let mut head = (&mut reader).take(MAX_HEAD);
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("the request line did not arrive: {e}"))?;
+    head.read_line(&mut line)
+        .map_err(|e| (400, format!("the request line did not arrive: {e}")))?;
+    if head.limit() == 0 && !line.ends_with('\n') {
+        return Err(too_long());
+    }
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
     let mut length = 0usize;
+    let (mut host, mut origin) = (None, None);
     loop {
         let mut h = String::new();
-        let n = reader.read_line(&mut h).map_err(|e| e.to_string())?;
+        let n = head.read_line(&mut h).map_err(|e| (400, e.to_string()))?;
+        if head.limit() == 0 && !h.ends_with('\n') {
+            return Err(too_long());
+        }
         if n == 0 || h == "\r\n" || h == "\n" {
             break;
         }
         let lower = h.to_ascii_lowercase();
         if let Some(v) = lower.strip_prefix("content-length:") {
             length = v.trim().parse().unwrap_or(0);
+        } else if let Some(v) = lower.strip_prefix("host:") {
+            host = Some(v.trim().to_string());
+        } else if let Some(v) = lower.strip_prefix("origin:") {
+            origin = Some(v.trim().to_string());
         }
+    }
+    if !from_this_page(host.as_deref(), origin.as_deref()) {
+        return Err((403, "the request does not come from the page of this server\n".to_string()));
     }
     let accepted = if path == "/api/explain" { MAX_EXPLAIN_BODY } else { MAX_BODY };
     if length > accepted {
-        return Err(format!("the body is larger than the {accepted} bytes accepted\n"));
+        return Err((400, format!("the body is larger than the {accepted} bytes accepted\n")));
     }
     let mut body = vec![0u8; length];
     reader
         .read_exact(&mut body)
-        .map_err(|e| format!("the body did not arrive whole: {e}"))?;
-    let body = String::from_utf8(body).map_err(|_| "the body is not UTF-8".to_string())?;
+        .map_err(|e| (400, format!("the body did not arrive whole: {e}")))?;
+    let body = String::from_utf8(body).map_err(|_| (400, "the body is not UTF-8".to_string()))?;
     Ok((method, path, body))
+}
+
+/// After a refusal: the socket is closed for writing and what the client is
+/// still sending is read and dropped, up to a bound and for a moment, since a
+/// socket closed with data unread resets, and the reset takes the answer with
+/// it on the way to the client.
+fn drain(stream: &mut TcpStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+    let started = Instant::now();
+    let mut sink = [0u8; 16 * 1024];
+    let mut read = 0usize;
+    while read < MAX_DRAIN && started.elapsed() < DRAIN_TIME {
+        match stream.read(&mut sink) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => read += n,
+        }
+    }
 }
 
 fn send(stream: &mut TcpStream, code: u16, kind: &str, body: &str) {
     let reason = match code {
         200 => "OK",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         _ => "Error",
     };
