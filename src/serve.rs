@@ -301,8 +301,24 @@ fn clean_name(raw: Option<String>) -> Result<String, String> {
     Ok(name)
 }
 
+/// The text a reference `@name` stands for: the process saved under that
+/// name, or, when the store holds none, the built-in example of that id.
+/// That way an example that refers to another, the release to its tests and
+/// the stroke to its transport, reads on an empty store, and a saved process
+/// of the same name wins. Everything that assembles a process resolves
+/// through here, the refusal of a cycle included.
+fn referred(name: &str, entries: &[(String, String)]) -> Result<String, String> {
+    entries
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t.clone())
+        .or_else(|| crate::examples::find(name).map(|e| e.text.to_string()))
+        .ok_or_else(|| format!("no process is saved as {name:?}, and no example has that name"))
+}
+
 /// Whether saving `text` under `name` would close a cycle of references,
-/// through the store as it stands: the message of the cycle, if it would.
+/// through the store as it stands and the examples behind it: the message
+/// of the cycle, if it would.
 fn closes_a_cycle(text: &str, name: &str, entries: &[(String, String)]) -> Option<String> {
     if !text.contains('@') && !entries.iter().any(|(_, t)| t.contains('@')) {
         return None;
@@ -311,11 +327,7 @@ fn closes_a_cycle(text: &str, name: &str, entries: &[(String, String)]) -> Optio
         if n == name {
             return Ok(text.to_string());
         }
-        entries
-            .iter()
-            .find(|(m, _)| m == n)
-            .map(|(_, t)| t.clone())
-            .ok_or_else(|| format!("no process is saved as {n:?}"))
+        referred(n, entries)
     };
     match parse::to_yaml_as(text, name, &mut resolve) {
         Err(e) if e.contains("form a cycle") => Some(e),
@@ -710,9 +722,10 @@ fn store_entries(bench: &Bench) -> Result<Vec<(String, String)>, String> {
 }
 
 /// The process as the parser of the crate reads it, every reference to a
-/// saved process spliced in place: the instance the engine sees, and beside
-/// it the identifier every node shows and the sub-processes. The store is
-/// read only when the text refers to it.
+/// saved process, or to an example when the store holds no such name,
+/// spliced in place: the instance the engine sees, and beside it the
+/// identifier every node shows and the sub-processes. The store is read
+/// only when the text refers to it.
 fn assemble(text: &str, bench: &Bench, editing: Option<&str>) -> Result<parse::Parsed, String> {
     let entries = if text.contains('@') { store_entries(bench)? } else { Vec::new() };
     // the text being written stands for its own name, saved or not, so that
@@ -721,11 +734,7 @@ fn assemble(text: &str, bench: &Bench, editing: Option<&str>) -> Result<parse::P
         if Some(name) == editing {
             return Ok(text.to_string());
         }
-        entries
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, t)| t.clone())
-            .ok_or_else(|| format!("no process is saved as {name:?}"))
+        referred(name, &entries)
     };
     match editing {
         Some(name) => parse::to_yaml_as(text, name, &mut resolve),
@@ -803,7 +812,8 @@ fn hello(bench: &Bench) -> String {
              after the max iterations. @saved refers to a process saved on this \
              page, spliced in place as a region, @\"a saved name\" one with spaces, and \
              @saved[shown] shows it under another name; a saved process may refer to \
-             others, never to itself."
+             others, never to itself. A name that is not saved is read among the \
+             examples."
         ),
         esc(EXAMPLE),
         bench.available(),

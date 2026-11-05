@@ -9,15 +9,18 @@
 //! maximize. The page lists them in its panel "Examples" and loads one with
 //! one click, settings included.
 //!
-//! The release refers to its tests as `@tests` and the stroke to its
-//! transport as `@transport`: the two subprocesses are examples of their
-//! own, and the entries of `examples/store.json`, for `sdcpi parse --saved`
-//! on the command line.
+//! An example is loaded under its id, and the id is also what a reference
+//! `@id` resolves to on the page when the store of the saved processes holds
+//! no process of that name: the release refers to its tests as `@tests` and
+//! the stroke to its transport as `@transport`, and both read on an empty
+//! store. On the command line the same two subprocesses are the entries of
+//! `examples/store.json`, for `sdcpi parse --saved`.
 
 /// One example: a process of a document, with the settings it is computed
 /// with there.
 pub struct Example {
-    /// The name the example is loaded under.
+    /// The name the example is loaded under, and the name a reference to it
+    /// is written with.
     pub id: &'static str,
     /// The document it comes from, `paper` or `thesis`.
     pub group: &'static str,
