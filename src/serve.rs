@@ -318,7 +318,7 @@ fn clean_name(raw: Option<String>) -> Result<String, String> {
 /// the stroke to its transport, reads on an empty store, and a saved process
 /// of the same name wins. Everything that assembles a process resolves
 /// through here, the refusal of a cycle included.
-fn referred(name: &str, entries: &[(String, String)]) -> Result<String, String> {
+pub(crate) fn referred(name: &str, entries: &[(String, String)]) -> Result<String, String> {
     entries
         .iter()
         .find(|(n, _)| n == name)
@@ -328,45 +328,57 @@ fn referred(name: &str, entries: &[(String, String)]) -> Result<String, String> 
 }
 
 /// Whether saving `text` under `name` would close a cycle of references,
-/// through the store as it stands and the examples behind it: the message
-/// of the cycle, if it would.
+/// through the store as it stands and the examples behind it: the message of
+/// the cycle, if it would. A depth first walk over the graph of the
+/// references, apart from the grammar: an unknown name or a text that does not
+/// parse on the way hides no reference behind it, and nothing is assembled, so
+/// a save costs what the texts on the walk are long.
 fn closes_a_cycle(text: &str, name: &str, entries: &[(String, String)]) -> Option<String> {
-    if !text.contains('@') && !entries.iter().any(|(_, t)| t.contains('@')) {
-        return None;
-    }
-    let mut resolve = |n: &str| -> Result<String, String> {
-        if n == name {
-            return Ok(text.to_string());
+    let mut seen = std::collections::HashSet::new();
+    let mut path = vec![(name.to_string(), parse::references_of(text).into_iter())];
+    while let Some((_, refs)) = path.last_mut() {
+        match refs.next() {
+            None => {
+                path.pop();
+            }
+            Some(next) if next == name => {
+                let mut cycle: Vec<&str> = path.iter().map(|(n, _)| n.as_str()).collect();
+                cycle.push(name);
+                return Some(format!("the references form a cycle: {}", cycle.join(" > ")));
+            }
+            Some(next) => {
+                if seen.insert(next.clone()) {
+                    if let Ok(t) = referred(&next, entries) {
+                        path.push((next, parse::references_of(&t).into_iter()));
+                    }
+                }
+            }
         }
-        referred(n, entries)
-    };
-    match parse::to_yaml_as(text, name, &mut resolve) {
-        Err(e) if e.contains("form a cycle") => Some(e),
-        _ => None,
     }
+    None
 }
 
-/// The saved processes whose text refers to `name`.
+/// The names of the store a text comes to through its references, at any
+/// depth, the examples on the way walked too, sorted.
+fn saved_behind(text: &str, entries: &[(String, String)]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut todo = parse::references_of(text);
+    while let Some(next) = todo.pop() {
+        if seen.insert(next.clone()) {
+            if let Ok(t) = referred(&next, entries) {
+                todo.extend(parse::references_of(&t));
+            }
+        }
+    }
+    seen.into_iter().filter(|n| entries.iter().any(|(e, _)| e == n)).collect()
+}
+
+/// The saved processes whose text refers to `name`, the references gathered
+/// as the parser reads them.
 fn referrers<'a>(name: &str, entries: &'a [(String, String)]) -> Vec<&'a str> {
-    let bare = format!("@{name}");
-    let quoted = format!("@\"{name}\"");
-    // a mention inside a comment is no reference
-    let code = |t: &str| -> String {
-        t.lines().map(|l| l.split('#').next().unwrap_or("")).collect::<Vec<_>>().join("\n")
-    };
     entries
         .iter()
-        .filter(|(n, t)| {
-            let t = &code(t);
-            n != name
-                && (t.contains(&quoted)
-                    || t.match_indices(&bare).any(|(i, _)| {
-                        !t[i + bare.len()..]
-                            .chars()
-                            .next()
-                            .map_or(false, |c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-                    }))
-        })
+        .filter(|(n, t)| n != name && parse::references_of(t).iter().any(|r| r == name))
         .map(|(n, _)| n.as_str())
         .collect()
 }
