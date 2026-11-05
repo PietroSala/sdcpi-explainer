@@ -47,6 +47,7 @@
 //! PRISM encoding of the same instance, an encoding that carries the progress of
 //! every internal node in full.
 
+use crate::bound::Clock;
 use crate::num::{zeros, Num};
 use crate::tree::{Kind, Tree};
 
@@ -85,6 +86,13 @@ pub struct Engine<'t> {
     /// exhausting memory. The number of outcomes is exponential in the nature
     /// nodes that fire between two choice states.
     pub max_outcomes: usize,
+    /// The same on what the branches of a macro step hold, in bytes by an
+    /// estimate: every branch keeps its trail, and a nest of loops makes the
+    /// trails long long before the branches are many.
+    pub max_held: usize,
+    /// What ends the search that walks this engine: a macro step may take far
+    /// longer than the time left, so it reads the clock as it goes.
+    pub clock: Clock,
 }
 
 /// One outcome of a macro step: the decisions it took, the impact it adds, the
@@ -122,6 +130,8 @@ pub enum StepError {
     /// A loop met with no bound on its passes: the engine runs the process
     /// with `MAX_ITER` set and the unbounded one lives in the bounds alone.
     Unbounded,
+    /// The deadline passed, or the flag of a cancel rose, inside a macro step.
+    Cut,
 }
 
 impl<'t> Engine<'t> {
@@ -129,7 +139,19 @@ impl<'t> Engine<'t> {
         Engine {
             tree,
             max_outcomes: 1 << 22,
+            max_held: 1 << 31,
+            clock: Clock::default(),
         }
+    }
+
+    /// One more branch of a macro step, with what it holds, against the caps.
+    #[inline]
+    fn branch(&self, held: &mut usize, holds: usize, branches: usize) -> Result<(), StepError> {
+        *held += holds;
+        if branches + 2 > self.max_outcomes || *held > self.max_held {
+            return Err(StepError::TooManyOutcomes(branches + 2));
+        }
+        Ok(())
     }
 
     /// `s_0`: the root running, everything else idle (Section 4).
@@ -325,6 +347,13 @@ impl<'t> Engine<'t> {
         prefix: Vec<u32>,
     ) -> Result<Vec<Outcome<N>>, StepError> {
         let k = self.tree.k;
+        // what one branch holds beyond its trail: its state, and the impact,
+        // the two sides of what was left, the two probabilities
+        let holds = start.len() + 64 + (3 * k + 2) * 2 * std::mem::size_of::<N>();
+        let mut held = holds;
+        // the clock is read every thousand clauses or so: a clause is a walk
+        // of the tree, and the rare macro step that runs long runs for many
+        let mut clauses = 0u32;
         let mut out: Vec<Outcome<N>> = Vec::new();
         // `left`: over the forced exits met so far, the probability of
         // leaving the bound there times what was paid plus the bound of the
@@ -344,6 +373,10 @@ impl<'t> Engine<'t> {
 
         while let Some((mut s, mut decisions, mut impact, mut left, mut stay, mut prob)) = stack.pop() {
             loop {
+                clauses = clauses.wrapping_add(1);
+                if clauses % 1024 == 0 && self.clock.passed() {
+                    return Err(StepError::Cut);
+                }
                 match self.rank_witness(&s) {
                     None => {
                         let gap = close(left, &impact, &stay);
@@ -383,9 +416,7 @@ impl<'t> Engine<'t> {
                         let bound = self.tree.max_iter.ok_or(StepError::Unbounded)?;
                         let closed = s[v as usize] as u32 + 1;
                         if closed < bound {
-                            if out.len() + stack.len() + 2 > self.max_outcomes {
-                                return Err(StepError::TooManyOutcomes(self.max_outcomes));
-                            }
+                            self.branch(&mut held, holds + 4 * decisions.len(), out.len() + stack.len())?;
                             let p = N::prob_of(self.tree, v);
                             let mut s_exit = s.clone();
                             s_exit[n.low as usize] = IDLE;
@@ -416,9 +447,13 @@ impl<'t> Engine<'t> {
                             let mut again = s.clone();
                             again[n.low as usize] = 0;
                             again[v as usize] = closed as i8;
-                            let b = beyond
-                                .entry(again)
-                                .or_insert_with_key(|a| crate::bound::bounds_with::<N>(self.tree, a, None));
+                            let b = match beyond.entry(again) {
+                                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                                std::collections::hash_map::Entry::Vacant(e) => {
+                                    let b = crate::bound::bounds_until::<N>(self.tree, e.key(), None, &self.clock);
+                                    e.insert(b.ok_or(StepError::Cut)?)
+                                }
+                            };
                             let leaving = N::prob_mul(&stay, &p);
                             for c in 0..k {
                                 left[c] = left[c].add(&impact[c].add(&b.lower[c]).scale(&leaving));
@@ -430,9 +465,7 @@ impl<'t> Engine<'t> {
                         }
                     }
                     Some((4, v)) => {
-                        if out.len() + stack.len() + 2 > self.max_outcomes {
-                            return Err(StepError::TooManyOutcomes(self.max_outcomes));
-                        }
+                        self.branch(&mut held, holds + 4 * decisions.len(), out.len() + stack.len())?;
                         let n = self.tree.node(v);
                         let p = N::prob_of(self.tree, v);
                         let mut s_high = s.clone();
@@ -577,5 +610,40 @@ impl<'t> Engine<'t> {
         let mut next = s.to_vec();
         next[action as usize] = 0;
         self.macro_step(next, vec![action])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::num::Exact;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    fn nest(n: usize, k: u32) -> Tree {
+        let text = format!("{}(A, 1, {{x: 1}}){}", "(0.5 ".repeat(n), ")".repeat(n));
+        let mut tree = Tree::parse(&crate::parse::to_yaml(&text).unwrap().yaml).unwrap();
+        tree.max_iter = Some(k);
+        tree
+    }
+
+    #[test]
+    fn a_macro_step_stops_at_its_deadline_and_at_the_flag_of_a_cancel() {
+        let tree = nest(5, 2);
+        let mut engine = Engine::new(&tree);
+        engine.clock.deadline = Some(Instant::now());
+        assert!(matches!(engine.initial_outcomes::<Exact>(), Err(StepError::Cut)));
+        let mut engine = Engine::new(&tree);
+        engine.clock.cancel = Some(Arc::new(AtomicBool::new(true)));
+        assert!(matches!(engine.initial_outcomes::<Exact>(), Err(StepError::Cut)));
+    }
+
+    #[test]
+    fn a_macro_step_stops_at_what_its_branches_hold() {
+        let tree = nest(16, 2);
+        let mut engine = Engine::new(&tree);
+        engine.max_held = 1 << 20;
+        assert!(matches!(engine.initial_outcomes::<Exact>(), Err(StepError::TooManyOutcomes(_))));
     }
 }

@@ -1080,6 +1080,10 @@ fn maximized_json(tree: &Tree) -> String {
     format!("[{}]", parts.join(", "))
 }
 
+/// How long the two bounds of the page may take: it asks for them at every
+/// change of the text, and no search stands behind them to cut them.
+const BOUNDS_TIME: Duration = Duration::from_secs(20);
+
 /// The two bounds of the process at its initial state, the extremes of the
 /// window the page offers on the expected values, with the time and the
 /// bound on the passes as the page has them.
@@ -1109,7 +1113,10 @@ fn bounds_of(body: &str, bench: &Bench) -> String {
             .clamp(1, 50),
     );
     let s0 = crate::state::Engine::new(&tree).initial_state();
-    let b = crate::bound::bounds::<Exact>(&tree, &s0);
+    let clock = crate::bound::Clock { deadline: Some(Instant::now() + BOUNDS_TIME), cancel: None };
+    let Some(b) = crate::bound::bounds_until::<Exact>(&tree, &s0, tree.max_iter, &clock) else {
+        return err(&format!("the two bounds of the process take longer than {} seconds", BOUNDS_TIME.as_secs()));
+    };
     let names: Vec<String> = (0..tree.k)
         .map(|c| match tree.meta.impact_names.get(c) {
             Some(n) if !n.is_empty() => esc(n),
@@ -1400,7 +1407,13 @@ fn frontier_json(prep: &Prepared, report: &pareto::Report, seconds: f64) -> Stri
     let points: Vec<String> = report.points.iter().map(|p| point_json(tree, &prep.labels, p)).collect();
     let cut = matches!(report.status, pareto::Status::Timeout);
     let grey = if report.outside > 0 { " What the search found outside them is drawn grey." } else { "" };
-    let mut note = if report.points.is_empty() && report.window.is_some() {
+    let mut note = if let pareto::Status::Failed(reason) = &report.status {
+        format!(
+            "The search failed: {reason}. A macro step, the forced moves between two choices, branches into more \
+             outcomes than the search holds, so the points found, if any, are not known to be the frontier; a \
+             smaller max iterations may fit."
+        )
+    } else if report.points.is_empty() && report.window.is_some() {
         if cut {
             format!(
                 "The search was cut before a point landed within the bounds; a longer run may find one.{grey}"
@@ -1485,6 +1498,18 @@ fn frontier_json(prep: &Prepared, report: &pareto::Report, seconds: f64) -> Stri
     )
 }
 
+/// Whether the two bounds at the initial state, which the search reads before
+/// its clock starts, end within the time limit: in long rationals they may not.
+/// The reason, when they do not.
+fn bounds_in_time(prep: &Prepared, cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) -> Result<(), String> {
+    let s0 = crate::state::Engine::new(&prep.tree).initial_state();
+    let clock = crate::bound::Clock { deadline: Some(Instant::now() + Duration::from_secs_f64(prep.limit)), cancel };
+    match crate::bound::bounds_until::<Exact>(&prep.tree, &s0, prep.tree.max_iter, &clock) {
+        Some(_) => Ok(()),
+        None => Err(format!("the two bounds of the process did not end within the time limit of {} seconds", prep.limit)),
+    }
+}
+
 /// Runs one search and answers with the frontier, every point with the
 /// strategy that attains it.
 fn frontier(body: &str, bench: &Bench) -> String {
@@ -1494,6 +1519,9 @@ fn frontier(body: &str, bench: &Bench) -> String {
     };
     let _one_at_a_time = SEARCH.lock().unwrap_or_else(|e| e.into_inner());
     let started = Instant::now();
+    if let Err(e) = bounds_in_time(&prep, None) {
+        return err(&e);
+    }
     match pareto::frontier(&prep.tree, options(&prep, None, None)) {
         Ok(report) => frontier_json(&prep, &report, started.elapsed().as_secs_f64()),
         Err(e) => err(&e),
@@ -1629,6 +1657,11 @@ fn start(body: &str, bench: &Bench) -> String {
     let spawned = std::thread::Builder::new().stack_size(64 << 20).spawn(move || {
         let _one_at_a_time = SEARCH.lock().unwrap_or_else(|e| e.into_inner());
         let started = Instant::now();
+        if let Err(e) = bounds_in_time(&worker.prep, Some(worker.cancel.clone())) {
+            eprintln!("search {id}: failed: {e}");
+            *worker.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(err(&e));
+            return;
+        }
         let json = match pareto::frontier(
             &worker.prep.tree,
             options(&worker.prep, Some(worker.live.clone()), Some(worker.cancel.clone())),

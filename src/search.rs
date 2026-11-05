@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::state::StepError;
 use crate::tables::{Branch, Expansion, History, Records, Store};
 use crate::num::{zeros, Num};
 use crate::tree::Tree;
@@ -947,6 +948,13 @@ fn run<'a, N: Num>(shared: &Shared<'a, N>, worker: usize, first: CtNode<'a, N>, 
         let cs = elected.cs;
         let low = match store.children(elected, Branch::Low) {
             Ok(v) => v,
+            // the time ran out inside the macro step: a cut like any other
+            Err(StepError::Cut) => {
+                abandon(shared, &node, &local);
+                publish(shared, expanded_here, peak_here, &mut cert);
+                shared.finish(Answer::Timeout(Vec::new()));
+                return;
+            }
             Err(e) => {
                 publish(shared, expanded_here, peak_here, &mut cert);
                 shared.finish(Answer::Failed(format!("{e:?}")));
@@ -955,6 +963,12 @@ fn run<'a, N: Num>(shared: &Shared<'a, N>, worker: usize, first: CtNode<'a, N>, 
         };
         let high = match store.children(elected, Branch::High) {
             Ok(v) => v,
+            Err(StepError::Cut) => {
+                abandon(shared, &node, &local);
+                publish(shared, expanded_here, peak_here, &mut cert);
+                shared.finish(Answer::Timeout(Vec::new()));
+                return;
+            }
             Err(e) => {
                 publish(shared, expanded_here, peak_here, &mut cert);
                 shared.finish(Answer::Failed(format!("{e:?}")));
@@ -1007,13 +1021,17 @@ fn search_in<'a, N: Num>(tree: &'a Tree, records: &'a Records<'a, N>, cfg: Confi
     let started = Instant::now();
     let workers = cfg.workers.max(1);
     let deadline = cfg.timeout.map(|d| started + d);
-    let store = Store::new(tree, records, (workers * 8).next_power_of_two());
+    let mut store = Store::new(tree, records, (workers * 8).next_power_of_two());
+    store.engine.clock = crate::bound::Clock { deadline, cancel: cfg.cancel.clone() };
 
     let initial = match store.initial_histories() {
         Ok(v) => v,
         Err(e) => {
             return (
-                Answer::Failed(format!("{e:?}")),
+                match e {
+                    StepError::Cut => Answer::Timeout(Vec::new()),
+                    e => Answer::Failed(format!("{e:?}")),
+                },
                 Stats {
                     elapsed: started.elapsed(),
                     ..Default::default()

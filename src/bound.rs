@@ -32,9 +32,49 @@
 //! floating-point runs of the paper and the exact runs of the frontier take the
 //! same traversal.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
 use crate::num::Num;
 use crate::state::{DONE, IDLE};
 use crate::tree::{Kind, Tree};
+
+/// What ends a computation from outside: a deadline, and a flag another thread
+/// raises. In rational arithmetic the numbers grow along the tree, and two
+/// thousand draws with long probabilities one inside the other take minutes
+/// over one state, so the walk of the bounds reads this as it goes.
+#[derive(Clone, Default)]
+pub struct Clock {
+    pub deadline: Option<Instant>,
+    pub cancel: Option<Arc<AtomicBool>>,
+}
+
+impl Clock {
+    pub fn passed(&self) -> bool {
+        self.deadline.map_or(false, |d| Instant::now() >= d)
+            || self.cancel.as_ref().map_or(false, |c| c.load(Ordering::Relaxed))
+    }
+}
+
+/// The clock as one walk reads it, every few nodes. Past it the walk goes on
+/// through the tree doing no arithmetic, and what it finds is thrown away.
+struct Walk<'c> {
+    clock: &'c Clock,
+    visits: u32,
+    over: bool,
+}
+
+impl Walk<'_> {
+    #[inline]
+    fn over(&mut self) -> bool {
+        self.visits = self.visits.wrapping_add(1);
+        if !self.over && self.visits % 16 == 0 && self.clock.passed() {
+            self.over = true;
+        }
+        self.over
+    }
+}
 
 /// The pair `(U_s, L_s)`, each of `k` components.
 pub struct Bounds<N: Num> {
@@ -51,16 +91,25 @@ pub fn bounds<N: Num>(tree: &Tree, s: &[i8]) -> Bounds<N> {
 /// The same with the bound on the passes given, `None` for the unbounded
 /// process.
 pub fn bounds_with<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>) -> Bounds<N> {
+    bounds_until(tree, s, max_iter, &Clock::default()).expect("a clock that never passes")
+}
+
+/// The same under a clock: nothing when it passed before the walk ended.
+pub fn bounds_until<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>, clock: &Clock) -> Option<Bounds<N>> {
     let k = tree.k;
     let mut stack: Vec<N> = Vec::with_capacity(8 * k);
     let mut cache: Vec<Option<Vec<N>>> = vec![None; tree.nodes.len()];
-    rec(tree, s, tree.root, &mut stack, max_iter, &mut cache);
+    let mut walk = Walk { clock, visits: 0, over: false };
+    rec(tree, s, tree.root, &mut stack, max_iter, &mut cache, &mut walk);
+    if walk.over {
+        return None;
+    }
     debug_assert_eq!(stack.len(), 2 * k);
     let lower = stack.split_off(k);
-    Bounds {
+    Some(Bounds {
         upper: stack,
         lower,
-    }
+    })
 }
 
 /// `U` and `L` of the region of the loop `v` from its idle state, the
@@ -70,13 +119,13 @@ pub fn bounds_with<N: Num>(tree: &Tree, s: &[i8], max_iter: Option<u32>) -> Boun
 /// rest of the traversal: a loop inside a loop would otherwise be charged
 /// again at every level above it, and the recursion would grow with two to
 /// the depth of the nesting.
-fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>) -> Vec<N> {
+fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>, walk: &mut Walk) -> Vec<N> {
     if let Some(c) = &cache[v as usize] {
         return c.clone();
     }
     let idle = vec![IDLE; tree.nodes.len()];
     let mut st: Vec<N> = Vec::with_capacity(2 * tree.k);
-    rec(tree, &idle, tree.node(v).low, &mut st, max_iter, cache);
+    rec(tree, &idle, tree.node(v).low, &mut st, max_iter, cache, walk);
     cache[v as usize] = Some(st.clone());
     st
 }
@@ -86,11 +135,12 @@ fn pass<N: Num>(tree: &Tree, v: u32, max_iter: Option<u32>, cache: &mut Vec<Opti
 /// The scratch stack keeps the recursion free of allocation: a combinator reads
 /// the `4k` values its two children left and folds them into the `2k` values it
 /// returns.
-fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>) {
+fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32>, cache: &mut Vec<Option<Vec<N>>>, walk: &mut Walk) {
     let k = t.k;
 
-    // s(v) = -2: the node is done and nothing is left to pay.
-    if s[v as usize] == DONE {
+    // s(v) = -2: the node is done and nothing is left to pay; past the clock
+    // nothing is computed and what is left is thrown away
+    if s[v as usize] == DONE || walk.over() {
         for _ in 0..2 * k {
             st.push(N::zero());
         }
@@ -122,11 +172,15 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
         // restoring it.
         Kind::Sequence => {
             if s[n.high as usize] != IDLE {
-                rec(t, s, n.high, st, max_iter, cache);
+                rec(t, s, n.high, st, max_iter, cache, walk);
             } else {
-                rec(t, s, n.low, st, max_iter, cache);
-                rec(t, s, n.high, st, max_iter, cache);
-                fold_sum(st, k);
+                rec(t, s, n.low, st, max_iter, cache, walk);
+                rec(t, s, n.high, st, max_iter, cache, walk);
+                if walk.over() {
+                    st.truncate(st.len() - 2 * k);
+                } else {
+                    fold_sum(st, k);
+                }
             }
         }
 
@@ -135,9 +189,13 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
         // longer of the two, bounded by their sum from above and by the
         // greater of the two lower bounds from below.
         Kind::Parallel => {
-            rec(t, s, n.low, st, max_iter, cache);
-            rec(t, s, n.high, st, max_iter, cache);
-            fold_parallel(st, k, t.time, t.time && t.maximized[0]);
+            rec(t, s, n.low, st, max_iter, cache, walk);
+            rec(t, s, n.high, st, max_iter, cache, walk);
+            if walk.over() {
+                st.truncate(st.len() - 2 * k);
+            } else {
+                fold_parallel(st, k, t.time, t.time && t.maximized[0]);
+            }
         }
 
         // A loop pays its region once per pass: the pass under way, if any,
@@ -158,20 +216,22 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
                     count + 1
                 }
                 x if x >= 0 => {
-                    rec(t, s, r, st, max_iter, cache);
+                    rec(t, s, r, st, max_iter, cache, walk);
                     count + 1
                 }
                 _ => {
-                    rec(t, s, r, st, max_iter, cache);
+                    rec(t, s, r, st, max_iter, cache, walk);
                     1
                 }
             };
             let further = max_iter.map(|m| m.saturating_sub(closed));
             let g = N::geometric(&p, further);
-            let one = pass::<N>(t, v, max_iter, cache);
-            let base = st.len() - 2 * k;
-            for j in 0..2 * k {
-                st[base + j] = st[base + j].add(&one[j].scale(&g));
+            let one = pass::<N>(t, v, max_iter, cache, walk);
+            if !walk.over() {
+                let base = st.len() - 2 * k;
+                for j in 0..2 * k {
+                    st[base + j] = st[base + j].add(&one[j].scale(&g));
+                }
             }
         }
 
@@ -181,13 +241,15 @@ fn rec<N: Num>(t: &Tree, s: &[i8], v: u32, st: &mut Vec<N>, max_iter: Option<u32
             if lo >= 0 {
                 // The branch has been taken already, and it is the only one that
                 // is not idle, by the branch invariant.
-                rec(t, s, n.low, st, max_iter, cache);
+                rec(t, s, n.low, st, max_iter, cache, walk);
             } else if hi >= 0 {
-                rec(t, s, n.high, st, max_iter, cache);
+                rec(t, s, n.high, st, max_iter, cache, walk);
             } else if lo == IDLE && hi == IDLE {
-                rec(t, s, n.low, st, max_iter, cache);
-                rec(t, s, n.high, st, max_iter, cache);
-                if n.kind == Kind::Choice {
+                rec(t, s, n.low, st, max_iter, cache, walk);
+                rec(t, s, n.high, st, max_iter, cache, walk);
+                if walk.over() {
+                    st.truncate(st.len() - 2 * k);
+                } else if n.kind == Kind::Choice {
                     fold_choice(st, k);
                 } else {
                     let p = N::prob_of(t, v);
@@ -262,4 +324,31 @@ fn fold_nature<N: Num>(st: &mut Vec<N>, k: usize, p: &N::Prob) {
         st[base + j] = N::expect(p, &st[base + j], &st[base + 2 * k + j]);
     }
     st.truncate(base + 2 * k);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::num::Exact;
+
+    #[test]
+    fn a_walk_past_its_clock_gives_nothing_and_one_before_it_the_bounds() {
+        let text = "(0.5 ((A, 1, {x: 1}) ^[0.3] ((B, 2, {x: 2}) ^ (C, 1, {x: 3}))) || (D, 1, {x: 1})), (E, 1, {x: 1})";
+        let mut tree = Tree::parse(&crate::parse::to_yaml(text).unwrap().yaml).unwrap();
+        tree.max_iter = Some(2);
+        let s0 = crate::state::Engine::new(&tree).initial_state();
+        let plain = bounds_with::<Exact>(&tree, &s0, tree.max_iter);
+        let later = Clock { deadline: Some(Instant::now() + std::time::Duration::from_secs(600)), cancel: None };
+        let timed = bounds_until::<Exact>(&tree, &s0, tree.max_iter, &later).unwrap();
+        assert!(plain.upper.iter().zip(&timed.upper).all(|(a, b)| a.0 == b.0));
+        assert!(plain.lower.iter().zip(&timed.lower).all(|(a, b)| a.0 == b.0));
+        // the clock is read every few nodes: a process long enough to reach it
+        let long = (0..64).map(|_| "(A, 1, {x: 1})").collect::<Vec<_>>().join(",");
+        let tree = Tree::parse(&crate::parse::to_yaml(&long).unwrap().yaml).unwrap();
+        let s0 = crate::state::Engine::new(&tree).initial_state();
+        let raised = Clock { deadline: None, cancel: Some(Arc::new(AtomicBool::new(true))) };
+        assert!(bounds_until::<Exact>(&tree, &s0, None, &raised).is_none());
+        let past = Clock { deadline: Some(Instant::now()), cancel: None };
+        assert!(bounds_until::<Exact>(&tree, &s0, None, &past).is_none());
+    }
 }

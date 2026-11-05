@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::arena::Arena;
-use crate::bound::{bounds, bounds_with};
+use crate::bound::bounds_until;
 use crate::num::{zeros, Num};
 use crate::state::{Engine, StepError, Stop};
 use crate::tree::Tree;
@@ -314,21 +314,23 @@ impl<'a, N: Num> Store<'a, N> {
     }
 
     /// The choice state of `state`, created if it is met for the first time.
-    /// Its two bounds are computed here, once, whoever gets there first.
-    pub fn intern_cs(&self, state: Vec<i8>, stop: Stop) -> &'a ChoiceState<'a, N> {
+    /// Its two bounds are computed here, once, whoever gets there first; the
+    /// clock of the search may pass in the middle of them.
+    pub fn intern_cs(&self, state: Vec<i8>, stop: Stop) -> Result<&'a ChoiceState<'a, N>, StepError> {
         let shard = shard_of_state(&state, self.cs_shards.len());
         {
             let map = self.cs_shards[shard].lock().unwrap();
             if let Some(found) = map.get(state.as_slice()) {
-                return found;
+                return Ok(found);
             }
         }
         // Computed outside the lock: the recursion is a walk of the whole tree,
         // and holding a shard while it runs would stall every other key that
         // hashes there.
-        let b = bounds::<N>(self.tree, &state);
+        let clock = &self.engine.clock;
+        let b = bounds_until::<N>(self.tree, &state, self.tree.max_iter, clock).ok_or(StepError::Cut)?;
         let (upper_inf, lower_inf) = if self.has_loops {
-            let i = bounds_with::<N>(self.tree, &state, None);
+            let i = bounds_until::<N>(self.tree, &state, None, clock).ok_or(StepError::Cut)?;
             (i.upper, i.lower)
         } else {
             (b.upper.clone(), b.lower.clone())
@@ -345,12 +347,12 @@ impl<'a, N: Num> Store<'a, N> {
         };
         let mut map = self.cs_shards[shard].lock().unwrap();
         if let Some(found) = map.get(state.as_slice()) {
-            return found;
+            return Ok(found);
         }
         let placed = self.records.choice_states.alloc(record);
         map.insert(state.into_boxed_slice(), placed);
         self.cs_made.fetch_add(1, Ordering::Relaxed);
-        placed
+        Ok(placed)
     }
 
     /// The extensions of a choice state under one action, computed on the first
@@ -373,15 +375,17 @@ impl<'a, N: Num> Store<'a, N> {
         self.outcomes.fetch_add(outcomes.len(), Ordering::Relaxed);
         let built: Box<[Extension<'a, N>]> = outcomes
             .into_iter()
-            .map(|o| Extension {
-                decisions: o.decisions.into_boxed_slice(),
-                impact: o.impact.into_boxed_slice(),
-                gap: o.gap.into_boxed_slice(),
-                stay: o.stay,
-                prob: o.prob,
-                cs: self.intern_cs(o.state, o.stop),
+            .map(|o| {
+                Ok(Extension {
+                    decisions: o.decisions.into_boxed_slice(),
+                    impact: o.impact.into_boxed_slice(),
+                    gap: o.gap.into_boxed_slice(),
+                    stay: o.stay,
+                    prob: o.prob,
+                    cs: self.intern_cs(o.state, o.stop)?,
+                })
             })
-            .collect();
+            .collect::<Result<_, StepError>>()?;
         let placed: &'a [Extension<'a, N>] = self.records.extensions.alloc(built);
         Ok(cell.get_or_init(|| placed))
     }
@@ -531,12 +535,12 @@ impl<'a, N: Num> Store<'a, N> {
         let outcomes = self.engine.initial_outcomes::<N>()?;
         self.macro_steps.fetch_add(1, Ordering::Relaxed);
         self.outcomes.fetch_add(outcomes.len(), Ordering::Relaxed);
-        Ok(outcomes
+        outcomes
             .into_iter()
             .map(|o| {
-                let cs = self.intern_cs(o.state, o.stop);
-                self.intern_history(o.decisions, o.impact, o.gap, o.stay, o.prob, cs)
+                let cs = self.intern_cs(o.state, o.stop)?;
+                Ok(self.intern_history(o.decisions, o.impact, o.gap, o.stay, o.prob, cs))
             })
-            .collect())
+            .collect()
     }
 }
