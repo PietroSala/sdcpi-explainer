@@ -19,7 +19,10 @@ reimplemented, with the run seed 20260815. The seed derivation of that
 stage is stable, one digest per instance from the seed and the key, so a
 grid drawn on any machine is the same bytes, and the artifact carries the
 generator and the pinned benchmark, not the instances. Dimensions run
-from two to ten, the modes are the six of the benchmark.
+from two to ten, the modes are the six of the benchmark. The campaign with
+`--loops` draws from the branch `loops` of the benchmark, and needs the
+checkout of that branch that `setup.py` of that suite fetches beside the
+generator, in `process-impact-benchmarks-loops`.
 
 ## The runs
 
