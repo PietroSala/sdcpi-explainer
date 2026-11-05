@@ -214,6 +214,10 @@ pub(crate) fn read_store(path: &std::path::Path) -> Result<Vec<(String, String)>
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
+    parse_store(&text).map_err(|e| format!("the store {}: {e}", path.display()))
+}
+
+fn parse_store(text: &str) -> Result<Vec<(String, String)>, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0usize;
     let skip = |i: &mut usize| {
@@ -259,7 +263,7 @@ pub(crate) fn read_store(path: &std::path::Path) -> Result<Vec<(String, String)>
     };
     skip(&mut i);
     if chars.get(i) != Some(&'{') {
-        return Err("the store does not open with a brace".to_string());
+        return Err("it does not open with a brace".to_string());
     }
     i += 1;
     let mut out = Vec::new();
@@ -807,17 +811,21 @@ fn store_entries(bench: &Bench) -> Result<Vec<(String, String)>, String> {
 /// The process as the parser of the crate reads it, every reference to a
 /// saved process, or to an example when the store holds no such name,
 /// spliced in place: the instance the engine sees, and beside it the
-/// identifier every node shows and the subprocesses. The store is read
-/// only when the text refers to it.
+/// identifier every node shows and the subprocesses. The store is read at
+/// the first reference the parser meets, so a text with none never reads it,
+/// whatever its comments mention.
 fn assemble(text: &str, bench: &Bench, editing: Option<&str>) -> Result<parse::Parsed, String> {
-    let entries = if text.contains('@') { store_entries(bench)? } else { Vec::new() };
+    let mut entries: Option<Vec<(String, String)>> = None;
     // the text being written stands for its own name, saved or not, so that
     // what the page shows is what a save would make of it
     let mut resolve = |name: &str| -> Result<String, String> {
         if Some(name) == editing {
             return Ok(text.to_string());
         }
-        referred(name, &entries)
+        if entries.is_none() {
+            entries = Some(store_entries(bench)?);
+        }
+        referred(name, entries.as_deref().unwrap_or_default())
     };
     match editing {
         Some(name) => parse::to_yaml_as(text, name, &mut resolve),
