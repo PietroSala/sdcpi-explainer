@@ -666,7 +666,7 @@ def section_svg(L, c, args):
     L.check("a valid text gives an svg", svg.lstrip().startswith("<svg") and svg.rstrip().endswith("</svg>"), describe("/api/svg", fields), d)
     L.check("one task box per task", svg.count('class="task"') == n_tasks, describe("/api/svg", fields), {"boxes": svg.count('class="task"'), "tasks": n_tasks})
     L.check("the impacts are listed alphabetically", d.get("impacts") == ["euro", "hours"], describe("/api/svg", fields), d.get("impacts"))
-    L.check("no sub-process in a plain text", d.get("subs") == [], describe("/api/svg", fields), d.get("subs"))
+    L.check("no subprocess in a plain text", d.get("subs") == [], describe("/api/svg", fields), d.get("subs"))
     L.check("every task name is drawn", all(f">{name}<" in svg for name in re.findall(r"\(\s*([A-Za-z_]\w*)\s*,\s*\d+", text)), describe("/api/svg", fields), svg[:300])
     # the switches, each on and off, every answer an svg with the same boxes
     switches = {
@@ -750,7 +750,7 @@ def section_svg(L, c, args):
     L.check("the same text under no name draws the chain", d.get("svg", "").count('class="task"') == 1 and d.get("svg", "").count('class="sub collapsed"') == 1, describe("/api/svg", f), d.get("error") or d.get("subs"))
     f = {"process": "(@cyc_a , (C, 1, {x: 1}))", "expand": "1"}
     d = c.post("/api/svg", f)
-    L.check("expanding a sub-process draws its tasks", d.get("svg", "").count('class="task"') == 2 and d.get("svg", "").count('class="sub collapsed"') == 1, describe("/api/svg", f), d.get("error") or d.get("subs"))
+    L.check("expanding a subprocess draws its tasks", d.get("svg", "").count('class="task"') == 2 and d.get("svg", "").count('class="sub collapsed"') == 1, describe("/api/svg", f), d.get("error") or d.get("subs"))
     f = {"process": "(@cyc_a , (C, 1, {x: 1}))", "expand": "1,1-1"}
     d = c.post("/api/svg", f)
     L.check("expanding both levels draws every task", d.get("svg", "").count('class="task"') == 3 and d.get("svg", "").count('class="sub collapsed"') == 0, describe("/api/svg", f), d.get("error") or d.get("subs"))

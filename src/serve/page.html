@@ -222,7 +222,7 @@
   .zoom button:hover { background: #f1f0ec; }
   .zoom button.fit { width: auto; padding: 0 8px; font-size: 11.5px; }
   #dnote { color: #b03a2e; font-size: 11.5px; margin-top: 4px; min-height: 1em; }
-  /* the tree of the sub-processes, one row each, indented by its depth */
+  /* the tree of the subprocesses, one row each, indented by its depth */
   .subhead { display: flex; gap: 6px; margin: 6px 0 4px; }
   .subhead button { width: auto; margin: 0; padding: 3px 9px; font-size: 12px; }
   .subrow { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12.5px; }
@@ -312,7 +312,7 @@
   <details class="group" id="g-display">
     <summary>Display</summary>
   <details id="subpanel" hidden>
-    <summary>Sub-processes</summary>
+    <summary>Subprocesses</summary>
     <div class="subhead"><button type="button" id="subopen" class="small ghost">Expand all</button>
       <button type="button" id="subclose" class="small ghost">Collapse all</button></div>
     <div id="subbox"></div>
@@ -712,7 +712,7 @@ function refreshDiagram() {
   clearTimeout(diagramTimer);
   diagramTimer = setTimeout(async () => {
     if ($('proc').value.trim() === '') {
-      // nothing to draw: the drawing, the chips and the sub-processes go
+      // nothing to draw: the drawing, the chips and the subprocesses go
       $('diagram').innerHTML = '<p class="status">Write a process, or load one.</p>';
       $('diagram').classList.remove('stale');
       $('dnote').textContent = '';
@@ -731,7 +731,7 @@ function refreshDiagram() {
     // the impacts not to draw, the ones unchecked among the chips: a process
     // just loaded has names the chips do not know yet, and is drawn whole
     body.set('hide', chipInputs.filter(c => !c.checked).map(c => c.value).join(','));
-    // the sub-processes to draw expanded, by the identifier they show
+    // the subprocesses to draw expanded, by the identifier they show
     body.set('expand', [...EXPANDED].join(','));
     try {
       const r = await fetch('/api/svg', { method: 'POST', body });
@@ -739,7 +739,7 @@ function refreshDiagram() {
       if (d.svg) {
         chips(d.impacts || []);
         subsPanel(d.subs || []);
-        // a view zoomed or panned survives the redraw, so that a sub-process
+        // a view zoomed or panned survives the redraw, so that a subprocess
         // opened from its plus opens where it was looked at
         const keep = VIEW && VIEW.zoomed() ? VIEW.state() : null;
         $('diagram').innerHTML = d.svg
@@ -762,10 +762,10 @@ function refreshDiagram() {
     } catch (e) { /* the server is away; the drawing stays */ }
   }, 250);
 }
-// The sub-processes of the text, the saved processes it refers to: every one
+// The subprocesses of the text, the saved processes it refers to: every one
 // starts collapsed, one box in the drawing, and is expanded from the panel
 // or from the plus on its border. A row of the panel is shown when every
-// sub-process above it is expanded, as a folder shows its content.
+// subprocess above it is expanded, as a folder shows its content.
 let EXPANDED = new Set();
 let SUBS = [];
 let VIEW = null;   // the viewport of the drawing, to keep a zoom across a redraw
@@ -775,13 +775,13 @@ function toggleSub(label) {
 }
 function subsPanel(subs) {
   SUBS = subs;
-  // an expansion whose sub-process is gone is dropped, the labels being
+  // an expansion whose subprocess is gone is dropped, the labels being
   // positional and a text edited having moved or removed the reference
   EXPANDED = new Set([...EXPANDED].filter(l => subs.some(s => s.label === l)));
   const panel = $('subpanel');
   if (!subs.length) { panel.hidden = true; return; }
   panel.hidden = false;
-  const above = (label) => {   // the identifiers of the sub-processes that contain this one
+  const above = (label) => {   // the identifiers of the subprocesses that contain this one
     const parts = label.split('-'), out = [];
     for (let i = 1; i < parts.length; i++) out.push(parts.slice(0, i).join('-'));
     return out;
@@ -836,7 +836,7 @@ function viewport(svg, onToggle, keep) {
     const [cx, cy] = at(ev);
     zoom(Math.exp(-ev.deltaY * 0.002), cx, cy);
   }, { passive: false });
-  // a press on the plus or the minus of a sub-process, released without a
+  // a press on the plus or the minus of a subprocess, released without a
   // drag, toggles it; the capture would otherwise keep the click from it
   let drag = null, origin = null, pressed = null, moved = false;
   svg.addEventListener('pointerdown', (ev) => {

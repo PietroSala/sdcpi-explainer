@@ -76,9 +76,9 @@ pub struct SubBox {
     pub shown: String,
     pub expanded: bool,
 }
-/// The square with the plus or the minus on the border of a sub-process.
+/// The square with the plus or the minus on the border of a subprocess.
 const TOGGLE: f64 = 14.0;
-/// The margin of the bold box of an expanded sub-process: room for its
+/// The margin of the bold box of an expanded subprocess: room for its
 /// corner line and for the minus in its corner.
 const SUB_M: f64 = 18.0;
 /// The band above and below the region of a loop: the back edge runs through
@@ -120,7 +120,7 @@ struct Sizes {
     maxes: Vec<f64>,
     /// The longest duration over the tasks, for the clocks.
     longest: i16,
-    /// The sub-process rooted at a node, by the identifier of the root.
+    /// The subprocess rooted at a node, by the identifier of the root.
     subs: HashMap<u32, usize>,
 }
 
@@ -131,11 +131,11 @@ impl Sizes {
     fn sub(&self, id: u32) -> Option<&SubBox> {
         self.subs.get(&id).map(|&i| &self.style.subs[i])
     }
-    /// A collapsed sub-process: drawn as one box, its tree left out.
+    /// A collapsed subprocess: drawn as one box, its tree left out.
     fn collapsed(&self, id: u32) -> bool {
         matches!(self.sub(id), Some(b) if !b.expanded)
     }
-    /// An expanded sub-process: its tree inside a bold box.
+    /// An expanded subprocess: its tree inside a bold box.
     fn expanded(&self, id: u32) -> bool {
         matches!(self.sub(id), Some(b) if b.expanded)
     }
@@ -151,11 +151,11 @@ impl Sizes {
     }
 }
 
-/// The lines of the box of a collapsed sub-process: the name it is shown
+/// The lines of the box of a collapsed subprocess: the name it is shown
 /// under, the saved process it refers to, and its identifier in the
 /// detailed drawing.
 fn sub_lines(s: &Sizes, id: u32) -> Vec<(&'static str, String)> {
-    let b = s.sub(id).expect("a collapsed sub-process");
+    let b = s.sub(id).expect("a collapsed subprocess");
     let mut lines = vec![("name", b.shown.clone()), ("detail", format!("@{}", b.name))];
     if s.style.detailed {
         // the identifier of the leaf that refers to it, not of its root
@@ -247,9 +247,9 @@ pub fn impact_names(tree: &Tree) -> Vec<String> {
 }
 
 /// How far inside its box the first and last element of a node sit: the
-/// margin of the bold box of an expanded sub-process, of the dashed box of
+/// margin of the bold box of an expanded subprocess, of the dashed box of
 /// a region in the detailed drawing, nothing otherwise and nothing for a
-/// task or a collapsed sub-process, which have no box around them.
+/// task or a collapsed subprocess, which have no box around them.
 fn inset(tree: &Tree, id: u32, s: &Sizes) -> f64 {
     if s.collapsed(id) {
         0.0
@@ -451,7 +451,7 @@ fn region_box(out: &mut String, id: u32, label: &str, x: f64, y: f64, w: f64, h:
     ));
 }
 
-/// The square on the bottom border of a sub-process, with a plus when the
+/// The square on the bottom border of a subprocess, with a plus when the
 /// process is collapsed and a minus when it is expanded: the page toggles
 /// the one for the other on a click.
 fn toggle(out: &mut String, label: &str, cx: f64, cy: f64, expanded: bool) {
@@ -466,13 +466,13 @@ fn toggle(out: &mut String, label: &str, cx: f64, cy: f64, expanded: bool) {
     ));
 }
 
-/// A collapsed sub-process: one box with the name it is shown under, the
+/// A collapsed subprocess: one box with the name it is shown under, the
 /// saved process it refers to, and the plus on its border.
 fn draw_collapsed(id: u32, x: f64, y: f64, s: &Sizes, out: &mut String) {
-    let b = s.sub(id).expect("a collapsed sub-process");
+    let b = s.sub(id).expect("a collapsed subprocess");
     let (w, h) = (s.w[id as usize], s.h[id as usize]);
     out.push_str(&format!(
-        "<g class=\"sub collapsed\" data-id=\"{id}\" data-sub=\"{}\">\n<title>sub-process @{}</title>\n\
+        "<g class=\"sub collapsed\" data-id=\"{id}\" data-sub=\"{}\">\n<title>subprocess @{}</title>\n\
          <rect class=\"box\" x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" rx=\"9\" ry=\"9\"/>\n",
         xml(&b.label), xml(&b.name)
     ));
@@ -488,7 +488,7 @@ fn draw_collapsed(id: u32, x: f64, y: f64, s: &Sizes, out: &mut String) {
     out.push_str("</g>\n");
 }
 
-/// The bold box of an expanded sub-process, its identifier and its names in
+/// The bold box of an expanded subprocess, its identifier and its names in
 /// the corner, the minus on its border; its tree is drawn inside.
 fn sub_box(out: &mut String, id: u32, b: &SubBox, x: f64, y: f64, w: f64, h: f64) {
     out.push_str(&format!(
@@ -499,7 +499,7 @@ fn sub_box(out: &mut String, id: u32, b: &SubBox, x: f64, y: f64, w: f64, h: f64
         x + 7.0, y + 12.0, xml(&corner_line(b, w))
     ));
     // the minus in the top right corner, inside the margin, where no toggle
-    // of a sub-process drawn inside can meet it
+    // of a subprocess drawn inside can meet it
     toggle(out, &b.label, x + w - SUB_M / 2.0, y + SUB_M / 2.0, true);
     out.push_str("</g>\n");
 }

@@ -724,7 +724,7 @@ fn store_entries(bench: &Bench) -> Result<Vec<(String, String)>, String> {
 /// The process as the parser of the crate reads it, every reference to a
 /// saved process, or to an example when the store holds no such name,
 /// spliced in place: the instance the engine sees, and beside it the
-/// identifier every node shows and the sub-processes. The store is read
+/// identifier every node shows and the subprocesses. The store is read
 /// only when the text refers to it.
 fn assemble(text: &str, bench: &Bench, editing: Option<&str>) -> Result<parse::Parsed, String> {
     let entries = if text.contains('@') { store_entries(bench)? } else { Vec::new() };
@@ -942,7 +942,7 @@ fn diagram(body: &str, bench: &Bench) -> String {
         Ok(t) => t,
         Err(e) => return err(&format!("the instance does not read: {e}")),
     };
-    // the sub-processes the page has expanded, by the identifier they show;
+    // the subprocesses the page has expanded, by the identifier they show;
     // everything starts collapsed
     let expanded: Vec<String> = field(body, "expand")
         .unwrap_or_default()

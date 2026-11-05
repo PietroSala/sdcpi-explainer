@@ -29,7 +29,7 @@ What is walked, each step a group of checks:
    5  saving      the name is edited in place, Save stores the text and the
                   pill says saved, the list shows it, + starts an empty
                   process, loading restores the text, @name draws a
-                  collapsed sub-process box that expands from the panel and
+                  collapsed subprocess box that expands from the panel and
                   from its plus, a reference closing a cycle is refused
    6  live        a search of some seconds shows the live bar with Pause and
                   Stop, the counters move, no table while it builds; Pause
@@ -589,9 +589,9 @@ def step_saving(S, page, ctx):
     before = set_text(page, "( @alpha , (Z, 1, {x: 1}) )")
     wait_diagram(page, before=before)
     sub = page.evaluate("() => document.querySelectorAll('#diagram svg g.sub.collapsed').length")
-    S.check("a reference @alpha draws a collapsed sub-process box", sub == 1, f"{sub} collapsed sub boxes",
+    S.check("a reference @alpha draws a collapsed subprocess box", sub == 1, f"{sub} collapsed sub boxes",
             repro="new process, text '( @alpha , (Z, 1, {x: 1}) )' with alpha saved")
-    S.check("the sub-process panel lists it", not page.evaluate("() => document.getElementById('subpanel').hidden")
+    S.check("the subprocess panel lists it", not page.evaluate("() => document.getElementById('subpanel').hidden")
             and page.evaluate("() => document.querySelectorAll('#subbox .subrow').length") == 1)
     S.check("the tasks of alpha are not drawn while collapsed",
             page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)") == ["Z"])
@@ -612,7 +612,7 @@ def step_saving(S, page, ctx):
     except Exception:
         ok = False
     S.check("the toggle on the box in the drawing collapses it", ok, "the box stays expanded after a click on its toggle",
-            repro="click the minus on the border of the sub-process box in #diagram")
+            repro="click the minus on the border of the subprocess box in #diagram")
     page.locator("#diagram svg [data-toggle='1']").click()
     wait_js(page, "() => document.querySelector('#diagram svg g.sub.expanded')")
     S.check("the toggle on the box expands it again", True)
@@ -1053,7 +1053,7 @@ def step_more(S, page, ctx):
     before = set_text(page, '( @"my proc"[Shown] , (Z, 1, {x: 1}) )')
     wait_diagram(page, before=before)
     subs = page.evaluate("() => [...document.querySelectorAll('#subbox .subrow')].map(r => r.textContent)")
-    S.check("a quoted reference draws a sub-process box shown under its own name",
+    S.check("a quoted reference draws a subprocess box shown under its own name",
             page.evaluate("() => document.querySelectorAll('#diagram svg g.sub.collapsed').length") == 1
             and any("Shown" in r and "my proc" in r for r in subs), f"subs {subs}",
             repro="save a process as 'my proc', write '( @\"my proc\"[Shown] , (Z, 1, {x: 1}) )'")
@@ -1175,13 +1175,13 @@ def step_examples(S, page, ctx):
     reveal(page, "#subpanel summary")
     page.evaluate("() => { document.getElementById('subpanel').open = true; }")
     subs = page.evaluate("() => [...document.querySelectorAll('#subbox .subrow')].map(r => r.textContent)")
-    S.check("the sub-process panel lists the tests of the release", len(subs) == 1 and "Tests" in subs[0] and "@tests" in subs[0], f"{subs}")
+    S.check("the subprocess panel lists the tests of the release", len(subs) == 1 and "Tests" in subs[0] and "@tests" in subs[0], f"{subs}")
     page.click("#subbox button.tg")
     wait_js(page, "() => document.querySelector('#diagram svg g.sub.expanded')")
     names = page.evaluate("() => [...document.querySelectorAll('#diagram svg g.task text.name')].map(t => t.textContent)")
     S.check("expanded, the box draws the tasks of the built-in tests", all(t in names for t in ("Unit", "Signoff", "Patch", "Refactor")) and len(names) == 11, f"tasks {names}")
     S.shot("examples-release-expanded")
-    # the winery: the direction of points, and the sub-process forgotten
+    # the winery: the direction of points, and the subprocess forgotten
     load("winery"); loaded("winery")
     S.check("the note of the winery names the component maximized",
             text_of(page, "#exnote") == "Loaded winery: expected time off, max iterations 1, points maximized", f"{text_of(page, '#exnote')!r}")
@@ -1190,7 +1190,7 @@ def step_examples(S, page, ctx):
             repro="load the winery from Examples and read the block Objective function")
     wait_js(page, "() => [...document.querySelectorAll('#window .rname span:first-child')].some(s => s.textContent.includes('points \u2191'))")
     S.check("the bounds carry the arrow of the direction", True)
-    S.check("the sub-process expanded in the release is forgotten", page.evaluate("() => EXPANDED.size") == 0)
+    S.check("the subprocess expanded in the release is forgotten", page.evaluate("() => EXPANDED.size") == 0)
     r = compute(page, 30000)
     values = page.evaluate("() => LAST.points.map(p => p.approx.map(Number))")
     S.check("the winery has its seven points, the points maximized",

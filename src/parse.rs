@@ -564,7 +564,7 @@ fn next_id(next: &mut u32) -> u32 {
     *next
 }
 
-/// The identifier every node shows and the sub-processes spliced in, by one
+/// The identifier every node shows and the subprocesses spliced in, by one
 /// walk that numbers the assembled tree exactly as `emit` does, in-order,
 /// and beside it every process by its own nodes, a spliced process counting
 /// one leaf of the process that refers to it.
@@ -614,7 +614,7 @@ fn walk(
             });
             // a saved text that is itself one reference is an alias: it has
             // no node of its own, so the two would share a root and one box;
-            // the chain is one sub-process, named after every link, and the
+            // the chain is one subprocess, named after every link, and the
             // nodes below it carry the leaf of every link in their labels
             let mut prefix = format!("{label}-");
             let mut chain = name.clone();
