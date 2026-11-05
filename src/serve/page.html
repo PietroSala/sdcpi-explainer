@@ -289,9 +289,10 @@
     <div class="exhead">The thesis: Synthesizing Strategies for Quantitative Processes</div>
     <ul id="ex-thesis"></ul>
     <div class="hint" id="exnote"></div>
-    <div class="hint">Load puts an example in the box under its name and sets the expected time, the max
-      iterations and the directions as its document has them, the bounds on the expected values and the
-      tolerances back at their start.</div>
+    <div class="hint">Load puts an example in the box under its name and sets what it is read with: the
+      expected time; the max iterations; the directions. The bounds on the expected values and the tolerances
+      go back to their start. The time limit, the workers and the early tests stay as they are, so a search
+      cut at the limit gives fewer points than a row says.</div>
   </details>
   <details id="bench" hidden>
     <summary>Load a process of the benchmark</summary>
@@ -322,8 +323,9 @@
     <div class="subhead"><button type="button" id="subopen" class="small ghost">Expand all</button>
       <button type="button" id="subclose" class="small ghost">Collapse all</button></div>
     <div id="subbox"></div>
-    <div class="hint">The processes this text refers to with <code>@name</code>, saved on this page or among
-      the examples, each drawn as one box until it is expanded, here or with the plus on its border.</div>
+    <div class="hint">The processes this text refers to with <code>@name</code>, each saved on this page or
+      among the examples as its row says, and each drawn as one box until it is expanded, here or with the
+      plus on its border.</div>
   </details>
   <label class="switch" for="detail"><input id="detail" type="checkbox" checked><span class="track"></span><span>Detailed regions</span></label>
   <div class="hint">Every region of the tree in a dashed box with its identifier, and the
@@ -441,7 +443,7 @@ fill('b-n', 1, 10, 2); fill('b-i', 1, 10, 3); fill('b-k', 1, 10, 2); fill('b-d',
 
 fetch('/api/hello').then(r => r.json()).then(h => {
   $('grammar').textContent = h.grammar || '';
-  if (h.example) $('proc').value = h.example;
+  if (h.example) { $('proc').value = h.example; DOC.brought = h.example; }
   refreshState();
   if (h.bench) {
     (h.modes || []).forEach(m => {
@@ -455,7 +457,9 @@ fetch('/api/hello').then(r => r.json()).then(h => {
 }).catch(() => {});
 
 // An instance of the benchmark, its text put in the process box.
-$('load').addEventListener('click', async () => {
+const BENCHHINT = $('benchnote').textContent;
+$('load').addEventListener('click', () => askDiscard(async () => {
+  const mine = ++LOADS;
   const body = new URLSearchParams({
     nested: $('b-n').value, independent: $('b-i').value, process: $('b-k').value,
     impacts: $('b-d').value, mode: $('b-m').value,
@@ -463,31 +467,75 @@ $('load').addEventListener('click', async () => {
     loops: $('bloops').checked ? '1' : '0',
   });
   $('load').disabled = true;
-  $('benchnote').textContent = 'Loading…';
+  $('benchnote').textContent = 'Loading\u2026';
   try {
     const r = await fetch('/api/bench', { method: 'POST', body });
     const d = await r.json();
     if (d.error) { $('benchnote').textContent = d.error; }
     else {
-      $('proc').value = d.process;
-      $('benchnote').textContent = `Loaded ${d.instance}` + (d.regenerated ? ', the impacts drawn again' : '');
-      DOC.loaded = null; DOC.baseline = null;
-      setName(d.instance + (d.regenerated ? '-' + $('seed').value : ''));
-      $('savenote').textContent = '';
-      EXPANDED.clear();
-      invalidate();
-      refreshDiagram();
+      const name = d.instance + (d.regenerated ? '-' + $('seed').value : '');
+      const saved = await savedText(name);
+      if (mine === LOADS) {
+        bring(d.process, name, saved);
+        $('benchnote').textContent = `Loaded ${d.instance}` + (d.regenerated ? ', the impacts drawn again' : '');
+      } else {
+        $('benchnote').textContent = BENCHHINT;
+      }
     }
   } catch (e) { $('benchnote').textContent = String(e); }
   $('load').disabled = false;
-});
+}));
 
 // -- the saved processes ------------------------------------------------------
 // The process in the box has a name, or none, and a baseline, the text saved
 // under that name, or none: the badge says whether the text is new, saved or
 // modified against the baseline, Save writes it, Rollback restores it, and
 // the panel lists what the server keeps.
-const DOC = { name: null, loaded: null, baseline: null };
+const DOC = { name: null, loaded: null, baseline: null, brought: null, adopted: false };
+
+// The text saved under a name, or null: the baseline of a process that a load
+// brings under that name, whichever panel it comes from.
+async function savedText(name) {
+  try {
+    const r = await fetch('/api/load', { method: 'POST', body: new URLSearchParams({ name }) });
+    const d = await r.json();
+    return d.error ? null : d.process;
+  } catch (e) { return null; }
+}
+// What every load does: the text in the box under its name, and what belonged
+// to the text before gone, the note of the panel of the examples, the expanded
+// subprocesses, the zoom of its drawing and its results. A text saved under
+// that name becomes the baseline, so that the pill says saved or modified and
+// Rollback reaches it; the process brought is not that text, though, so Save
+// still asks before it replaces it.
+function bring(text, name, saved) {
+  $('proc').value = text;
+  DOC.brought = text;
+  DOC.loaded = saved === null ? null : name;
+  DOC.baseline = saved;
+  DOC.adopted = saved !== null;
+  setName(name);
+  clearExNote();
+  $('savenote').textContent = '';
+  EXPANDED.clear();
+  VIEW = null;
+  invalidate();
+  refreshDiagram();
+  window.scrollTo(0, 0);
+}
+// A load or a new process replaces the text in the box. A text neither saved
+// nor brought by the last load is work that would be lost, so it is asked about
+// first, on the row of the note, as the overwrite is; any other text goes
+// without a question.
+function askDiscard(go) {
+  const text = $('proc').value;
+  if (text.trim() === '' || text === DOC.baseline || text === DOC.brought) { go(); return; }
+  $('savenote').innerHTML = `The text is not saved. Discard it?`
+    + ` <button type="button" id="nw-yes">yes</button><button type="button" id="nw-no" class="ghost">no</button>`;
+  $('nw-yes').addEventListener('click', () => { $('savenote').textContent = ''; go(); });
+  $('nw-no').addEventListener('click', () => { $('savenote').textContent = ''; });
+  window.scrollTo(0, 0);
+}
 
 function setName(name) {
   DOC.name = name && name.trim() ? name.trim() : null;
@@ -555,13 +603,15 @@ async function saveProcess(overwrite) {
     if (d.error) { $('savenote').textContent = d.error; return; }
     if (d.exists) {
       // the question takes the place of the note, no dialogue in front of the page
-      $('savenote').innerHTML = `A process named <b>${h(d.name)}</b> is saved already. Overwrite it?`
+      $('savenote').innerHTML = (d.example
+          ? `<b>${h(d.name)}</b> is the name of an example, and a process saved under it takes the place of the example wherever a reference reads it. Save it?`
+          : `A process named <b>${h(d.name)}</b> is saved already. Overwrite it?`)
         + ` <button type="button" id="ow-yes">yes</button><button type="button" id="ow-no" class="ghost">no</button>`;
       $('ow-yes').addEventListener('click', () => saveProcess(true));
       $('ow-no').addEventListener('click', () => { $('savenote').textContent = ''; });
       return;
     }
-    DOC.loaded = d.name; DOC.baseline = text;
+    DOC.loaded = d.name; DOC.baseline = text; DOC.adopted = false;
     $('savenote').textContent = `Saved as ${d.name}.`;
     refreshState();
     refreshSaved();
@@ -570,26 +620,20 @@ async function saveProcess(overwrite) {
 }
 $('save').addEventListener('click', () => {
   // saving again under the name the text was loaded from needs no question
-  saveProcess(DOC.name !== null && DOC.name === DOC.loaded);
+  saveProcess(DOC.name !== null && DOC.name === DOC.loaded && !DOC.adopted);
 });
-// A new, empty process: the text, the name and the loaded state go. A text
-// not saved is asked about first, on the row of the note, as the overwrite
-// is; a text saved as it stands, or empty, goes without a question.
-function newProcess() {
-  const text = $('proc').value;
-  const unsaved = text.trim() !== '' && text !== DOC.baseline;
-  if (!unsaved) { startNew(); return; }
-  $('savenote').innerHTML = `The text is not saved. Discard it?`
-    + ` <button type="button" id="nw-yes">yes</button><button type="button" id="nw-no" class="ghost">no</button>`;
-  $('nw-yes').addEventListener('click', startNew);
-  $('nw-no').addEventListener('click', () => { $('savenote').textContent = ''; });
-}
+// A new, empty process: the text, the name and the loaded state go, once
+// askDiscard has asked about a text that would be lost.
+function newProcess() { askDiscard(startNew); }
 function startNew() {
+  LOADS++;
   endNameEdit(false);
   $('proc').value = '';
   EXPANDED.clear();
-  DOC.loaded = null; DOC.baseline = null;
+  VIEW = null;
+  DOC.loaded = null; DOC.baseline = null; DOC.brought = null; DOC.adopted = false;
   setName(null);
+  clearExNote();
   $('savenote').textContent = '';
   invalidate(); refreshDiagram(); refreshState();
   $('proc').focus();
@@ -598,6 +642,7 @@ $('newp').addEventListener('click', newProcess);
 $('rollback').addEventListener('click', () => {
   if (DOC.baseline === null) return;
   $('proc').value = DOC.baseline;
+  DOC.adopted = false;
   $('savenote').textContent = `Back to the text saved as ${DOC.loaded}.`;
   EXPANDED.clear();
   invalidate(); refreshDiagram(); refreshState();
@@ -616,7 +661,7 @@ async function refreshSaved() {
     $('savedbox').innerHTML = '<ul>' + list.map(e =>
       `<li><a data-name="${h(e.name)}" title="${h(e.name)}">${h(e.name)}</a><span>${e.chars} characters</span>`
       + `<button type="button" class="bin" data-name="${h(e.name)}" title="delete ${h(e.name)}">${bin}</button></li>`).join('') + '</ul>';
-    $('savedbox').querySelectorAll('a[data-name]').forEach(a => a.addEventListener('click', () => loadSaved(a.dataset.name)));
+    $('savedbox').querySelectorAll('a[data-name]').forEach(a => a.addEventListener('click', () => askDiscard(() => loadSaved(a.dataset.name))));
     // the bin turns the row into a question, yes or no, on the row itself
     $('savedbox').querySelectorAll('button.bin').forEach(b => b.addEventListener('click', () => {
       const li = b.parentNode, name = b.dataset.name;
@@ -646,17 +691,16 @@ async function deleteSaved(name) {
   refreshSaved();
 }
 async function loadSaved(name) {
+  const mine = ++LOADS;
   const body = new URLSearchParams({ name });
   try {
     const r = await fetch('/api/load', { method: 'POST', body });
     const d = await r.json();
+    if (mine !== LOADS) return;
     if (d.error) { $('savenote').textContent = d.error; return; }
-    $('proc').value = d.process;
-    DOC.loaded = d.name; DOC.baseline = d.process;
-    setName(d.name);
+    bring(d.process, d.name, d.process);
+    DOC.adopted = false;
     $('savenote').textContent = `Loaded ${d.name}.`;
-    EXPANDED.clear();
-    invalidate(); refreshDiagram();
   } catch (e) { $('savenote').textContent = String(e); }
 }
 refreshSaved();
@@ -664,7 +708,7 @@ refreshSaved();
 // -- the examples -------------------------------------------------------------
 // The processes of the paper and of the thesis, built into the server: the
 // panel lists them under their document, and Load puts one in the box under
-// its name, with the settings its document computes it with.
+// its name, with the settings it is read with.
 async function refreshExamples() {
   try {
     const r = await fetch('/api/examples');
@@ -675,29 +719,38 @@ async function refreshExamples() {
         + `<button type="button" class="small" data-example="${h(e.id)}" title="load ${h(e.id)} with its settings">Load</button></li>`).join('');
     }
     $('examples').querySelectorAll('button[data-example]').forEach(b =>
-      b.addEventListener('click', () => loadExample(b.dataset.example)));
+      b.addEventListener('click', () => askDiscard(() => loadExample(b.dataset.example))));
   } catch (e) { /* the server is away */ }
+}
+// The line of the panel says what a load set, and it goes as soon as that no
+// longer holds, here and on the row of the note.
+function clearExNote() {
+  if ($('savenote').textContent === $('exnote').textContent) $('savenote').textContent = '';
+  $('exnote').textContent = '';
 }
 // The settings of an example go through the paths a user takes: the switch
 // and the field change and say so, a direction is set as a click on its
 // switch sets it, and the bounds on the expected values and the tolerances
 // go back to their start, so that the frontier computed next is the one of
-// the document and not the one of a window left from another process.
+// the row and not the one of a window left from another process. The chips of
+// the drawing start whole for the same reason.
 async function loadExample(id) {
   const note = $('exnote');
+  const mine = ++LOADS;
   try {
     const r = await fetch('/api/example', { method: 'POST', body: new URLSearchParams({ id }) });
     const d = await r.json();
+    if (mine !== LOADS) return;
     if (d.error) { note.textContent = d.error; return; }
-    $('proc').value = d.process;
-    DOC.loaded = null; DOC.baseline = null;
-    setName(d.name);
-    $('savenote').textContent = '';
-    EXPANDED.clear();
+    const saved = await savedText(d.name);
+    if (mine !== LOADS) return;
+    $('chips').innerHTML = '';
+    CHIPS = [];
+    bring(d.process, d.name, saved);
     if ($('time').checked !== !!d.time) { $('time').checked = !!d.time; $('time').dispatchEvent(new Event('change')); }
     $('maxiter').value = String(d.max_iter);
     $('maxiter').dispatchEvent(new Event('change'));
-    const maximize = d.maximize || [];
+    const maximize = d.maximize || [], shadowed = d.shadowed || [];
     Object.keys(DIRS).filter(n => !maximize.includes(n)).forEach(n => setDirection(n, 'min'));
     maximize.forEach(n => setDirection(n, 'max'));
     // the two Reset buttons repaint the sliders on the page; the ends kept
@@ -706,10 +759,16 @@ async function loadExample(id) {
     $('treset').click();
     Object.values(WINDOW).forEach(R => { R.lo = R.a; R.hi = R.b; R.loX = null; R.hiX = null; });
     Object.values(TOL).forEach(R => { R.hi = 0; });
-    invalidate();
-    refreshDiagram();
-    note.textContent = `Loaded ${d.name}: expected time ${d.time ? 'on' : 'off'}, max iterations ${d.max_iter}`
-      + (maximize.length ? `, ${maximize.join(' and ')} maximized` : '');
+    // the max iterations mean nothing without a loop, and a saved process
+    // behind a reference of the example is no longer the example
+    const said = `Loaded ${d.name}: expected time ${d.time ? 'on' : 'off'}`
+      + (d.loops ? `, max iterations ${d.max_iter}` : '')
+      + (maximize.length ? `, ${maximize.join(' and ')} maximized` : '')
+      + (shadowed.length
+          ? `; ${shadowed.map(n => '@' + n).join(' and ')} ${shadowed.length === 1 ? 'reads the process saved under that name, not the example,' : 'read the processes saved under those names, not the examples,'} so what the row says may no longer hold`
+          : '');
+    note.textContent = said;
+    $('savenote').textContent = said;
   } catch (e) { note.textContent = String(e); }
 }
 refreshExamples();
@@ -804,7 +863,8 @@ function subsPanel(subs) {
     .filter(s => above(s.label).every(a => EXPANDED.has(a)))
     .map(s => `<div class="subrow" style="padding-left:${s.depth * 16}px">`
       + `<button type="button" class="tg" data-toggle="${h(s.label)}" title="${s.expanded ? 'collapse' : 'expand'}">${s.expanded ? '−' : '+'}</button>`
-      + `<code>${h(s.label)}</code><span>${h(s.shown)}</span><span class="muted">@${h(s.name)}</span></div>`)
+      + `<code>${h(s.label)}</code><span>${h(s.shown)}</span><span class="muted">@${h(s.name)}</span>`
+      + `<span class="muted">${s.saved ? 'saved' : 'example'}</span></div>`)
     .join('');
   $('subbox').querySelectorAll('button.tg').forEach(b => b.addEventListener('click', () => toggleSub(b.dataset.toggle)));
 }
@@ -831,7 +891,7 @@ function invalidate() {
   LAST = null; SELECTED = null;
   $('out').innerHTML = '<p class="status">The process changed; press the button to compute its frontier.</p>';
 }
-$('proc').addEventListener('input', () => { invalidate(); refreshDiagram(); refreshState(); });
+$('proc').addEventListener('input', () => { LOADS++; clearExNote(); invalidate(); refreshDiagram(); refreshState(); });
 
 // Zoom and pan on a drawing: the wheel zooms about the pointer, a drag pans,
 // the buttons zoom about the centre and fit the whole drawing again. The
@@ -1279,8 +1339,10 @@ function buildDirs(b) {
     return `<div class="dir"><span>${h(n)}</span><div class="seg${tm ? ' time' : ''}" role="radiogroup" data-n="${h(n)}"
         aria-label="direction of ${h(n)}">${half('min', '\u2193 min')}${half('max', '\u2191 max')}</div></div>`;
   }).join('');
-  box.querySelectorAll('.seg button').forEach(btn => btn.addEventListener('click', () =>
-    setDirection(btn.parentNode.dataset.n, btn.dataset.v)));
+  box.querySelectorAll('.seg button').forEach(btn => btn.addEventListener('click', () => {
+    clearExNote();
+    setDirection(btn.parentNode.dataset.n, btn.dataset.v);
+  }));
 }
 // The tolerances, by name: a fraction of the range of the component, kept
 // through the edits of the text, shown with what it is worth in the units
@@ -1397,8 +1459,8 @@ function windowField() {
     return `${n}=` + (R.lo > R.a ? (R.loX || String(R.lo)) : '') + ',' + (R.hi < R.b ? (R.hiX || String(R.hi)) : '');
   }).join(';');
 }
-$('time').addEventListener('change', refreshBounds);
-$('maxiter').addEventListener('change', refreshBounds);
+$('time').addEventListener('change', () => { clearExNote(); refreshBounds(); });
+$('maxiter').addEventListener('change', () => { clearExNote(); refreshBounds(); });
 
 // the one filter: the switch on the final points and every range at once
 // The table of the points, a page at a time: of the points kept by the
