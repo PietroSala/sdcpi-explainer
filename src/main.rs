@@ -99,7 +99,8 @@ the grammar of parse, written inline or in the file
   names only the impacts that are strictly positive, {} and no map both
   meaning all zero; # comments to end of line. A region may be @saved, or
   @saved[shown], a process of the store of the page (--saved F, the file
-  sdcpi serve writes) spliced in place, to any depth and never in a cycle. The instance file is written
+  sdcpi serve writes), or the example of that name when the store does not hold
+  it, spliced in place, to any depth and never in a cycle. The instance file is written
   to standard output, identifiers in-order, impact_names in the order the
   names first appear, the vectors mapped by that order.
 
@@ -590,20 +591,16 @@ fn cmd_parse(args: &[String]) -> i32 {
         (None, Some(_)) => args.positional.join(" "),
         _ => return fail("give the process inline or through --file, not both and not neither"),
     };
-    // a reference @saved is resolved against a store of the page, --saved F
+    // a reference @saved is resolved against a store of the page, --saved F,
+    // as the page resolves it: a name the store does not hold is read among
+    // the examples, so a store the page wrote reads here too
     let parsed = match args.flag("saved") {
         None => parse::to_yaml(&text),
         Some(f) if !std::path::Path::new(f).is_file() => return fail(&format!("{f}: no such file")),
         Some(f) => match serve::read_store(std::path::Path::new(f)) {
             Err(e) => return fail(&e),
             Ok(entries) => {
-                let mut resolve = |name: &str| -> Result<String, String> {
-                    entries
-                        .iter()
-                        .find(|(n, _)| n == name)
-                        .map(|(_, t)| t.clone())
-                        .ok_or_else(|| format!("no process is saved as {name:?} in {f}"))
-                };
+                let mut resolve = |name: &str| serve::referred(name, &entries).map_err(|e| format!("{f}: {e}"));
                 parse::to_yaml_with(&text, &mut resolve)
             }
         },
