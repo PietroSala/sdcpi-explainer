@@ -713,9 +713,11 @@ refreshExamples();
 // keystroke the process is sent and drawn again; while it does not parse the
 // last drawing stays, dimmed, with the reason under it.
 let diagramTimer = null;
+let DIAGRAMS = 0;   // the last drawing asked for: an answer to an earlier one is dropped
 function refreshDiagram() {
   refreshBounds();
   clearTimeout(diagramTimer);
+  const mine = ++DIAGRAMS;
   diagramTimer = setTimeout(async () => {
     if ($('proc').value.trim() === '') {
       // nothing to draw: the drawing, the chips and the subprocesses go
@@ -742,6 +744,7 @@ function refreshDiagram() {
     try {
       const r = await fetch('/api/svg', { method: 'POST', body });
       const d = await r.json();
+      if (mine !== DIAGRAMS) return;
       if (d.svg) {
         chips(d.impacts || []);
         subsPanel(d.subs || []);
@@ -1285,8 +1288,10 @@ function buildTolerances(b, order) {
 let WINDOW = {};   // by name: the extremes a, b and the ends lo, hi
 let WNAMES = [];   // the names in the order of the server, the time first
 let boundsTimer = null;
+let BOUNDS = 0;   // the last bounds asked for: an answer to an earlier one is dropped
 function refreshBounds() {
   clearTimeout(boundsTimer);
+  const mine = ++BOUNDS;
   boundsTimer = setTimeout(async () => {
     if ($('proc').value.trim() === '') { $('wbox').hidden = true; $('dbox').hidden = true; $('tbox').hidden = true; WNAMES = []; return; }
     const body = new URLSearchParams({ process: $('proc').value, name: DOC.name || '',
@@ -1296,6 +1301,7 @@ function refreshBounds() {
     try {
       const r = await fetch('/api/bounds', { method: 'POST', body });
       const d = await r.json();
+      if (mine !== BOUNDS) return;
       if (d.names) { buildDirs(d); buildWindow(d); }
       else if (d.error && WNAMES.length) { /* a text that does not read yet: the panels stay as they were */ }
       else { $('wbox').hidden = true; $('dbox').hidden = true; $('tbox').hidden = true; }
