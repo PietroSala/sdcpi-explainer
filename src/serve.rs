@@ -706,7 +706,10 @@ fn send(stream: &mut TcpStream, code: u16, kind: &str, body: &str) {
 /// One field of an `application/x-www-form-urlencoded` body.
 fn field<'a>(body: &'a str, name: &str) -> Option<String> {
     for pair in body.split('&') {
-        let (k, v) = pair.split_once('=')?;
+        // a pair with no value says nothing, and hides nothing after it
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
         if unescape(k) == name {
             return Some(unescape(v));
         }
