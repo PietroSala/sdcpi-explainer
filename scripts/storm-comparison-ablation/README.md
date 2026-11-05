@@ -105,8 +105,8 @@ source .venv/bin/activate
 pip install -r scripts/storm-comparison-ablation/requirements.txt
 ```
 
-Then the setup, which clones the source benchmark at the pinned commit and
-unpacks the recorded campaign:
+Then the setup, which clones the source benchmark and its branch with
+loops, each at its pinned commit, and unpacks the recorded campaign:
 
 ```sh
 python3 scripts/storm-comparison-ablation/setup.py
@@ -141,7 +141,11 @@ scripts resolve their own paths, so the working directory does not matter.
    clones process-impact-benchmarks (Workneh, Sala, Rizzi, Cristani,
    Information Systems 2025), the one thousand process shapes and the
    generator of the impact vectors, called and not reimplemented, and pins
-   it to the recorded commit.
+   it to the recorded commit. It also clones the branch `loops` of the same
+   repository, the thousand shapes with loops, into
+   `process-impact-benchmarks-loops` beside the first clone, pinned too: the
+   stages of this suite do not read it, `make_bpmn_cpi.py --loops`, the
+   campaign with loops and the page of `sdcpi serve` do.
 1. **The instances.** `python3 scripts/storm-comparison-ablation/make_bpmn_cpi.py
    --all --dimensions 2 3 4 5 6 7 8 9 10 --mode all --seed 20260815` writes
    the grid, `bpmn-cpi-benchmarks/`, 54 000 instances: the thousand
