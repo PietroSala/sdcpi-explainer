@@ -29,13 +29,15 @@ What is checked, route by route:
               paper and of the thesis with their group and their settings,
               typed, and no text in it; every example by its id, its text
               the file under `examples/`, drawing its diagram and giving,
-              with its settings, the frontier its document reports, 1937
-              points for the release; an unknown id, a missing one and a
-              path are errors; the release and the stroke drawn, bounded,
-              searched and explained on an empty store through the built-in
-              subprocess; a save closing a cycle through an example refused;
-              a saved process named `tests` shadowing the built-in one until
-              it is deleted.
+              with its settings, the frontier it then has, 1937 points for
+              the release; an unknown id, a missing one and a path are
+              errors; the release and the stroke drawn, bounded, searched
+              and explained on an empty store through the built-in
+              subprocess; a save closing a cycle through an example refused,
+              whatever stands before the reference that closes it; a save
+              under the name of an example asked about; a saved process named
+              `tests` shadowing the built-in one until it is deleted, said by
+              the row of the subprocess and by the answer of the example.
   svg         a valid text gives an SVG with one task box per task, with each
               of the switches detail, tooltips, bars, clocks, names on and
               off; `hide` and `show` select the bars; an invalid text, an
@@ -134,10 +136,11 @@ TEXT_SLOW = """( ( ( (T1, 2, {impact0: 0.954507, impact1: 0.059873, impact2: 0.7
      , ( ( (T19, 1, {impact0: 0.890546, impact1: 0.869393, impact2: 0.856733, impact3: 0.373456, impact4: 0.609533}) ^ (T20, 1, {impact0: 0.703268, impact1: 0.945377, impact2: 0.43249, impact3: 0.570204, impact4: 0.871707}) )
        ^[0.728244] (T21, 3, {impact0: 0.426879, impact1: 0.394883, impact2: 0.790622, impact3: 0.756004, impact4: 0.406662}) ) ) )"""
 
-# the examples of the panel, as the list of the page must give them: the id,
-# the group, the file of the text under examples/, the three settings, and
-# the number of points of the frontier computed with them, the outcome the
-# paper and the thesis report
+# the examples of the panel, as the list of the page must give them: the id;
+# the group; the file of the text under examples/; the three settings; the
+# number of points of the frontier computed with them, stated by the thesis
+# for the winery, the stroke and its release, by the paper for the coin and
+# recorded in the data of the paper for the release
 EXAMPLES = [
     ("release", "paper", "release.cpi", False, 2, [], 1937),
     ("tests", "paper", "tests.cpi", False, 2, [], 2),
@@ -524,7 +527,7 @@ def section_bench(L, c, args, hello):
 def section_examples(L, c, args, work):
     L.start("examples")
     if args.no_loops:
-        L.skip("examples", "the mirror without loops has no panel of examples")
+        L.skip("examples", "--no-loops: the binary has no panel of examples")
         return
     status, text = c.status_of("/api/examples")
     try:
@@ -541,10 +544,10 @@ def section_examples(L, c, args, work):
     typed = lambda e: (isinstance(e.get("time"), bool) and isinstance(e.get("max_iter"), int) and not isinstance(e.get("max_iter"), bool) and e["max_iter"] >= 1
                        and isinstance(e.get("maximize"), list) and all(isinstance(n, str) for n in e["maximize"]))
     L.check("the settings of the list are present and typed", all(typed(e) for e in listed), "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
-    L.check("the settings of the list are those of the documents", [(e.get("time"), e.get("max_iter"), e.get("maximize")) for e in listed] == [(x[3], x[4], x[5]) for x in EXAMPLES], "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
+    L.check("the settings of the list are the recorded ones", [(e.get("time"), e.get("max_iter"), e.get("maximize")) for e in listed] == [(x[3], x[4], x[5]) for x in EXAMPLES], "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
     saved_before = json.loads(c.get("/api/saved")[1]).get("saved")
     L.check("the store is empty while the examples are read", saved_before == [], "GET /api/saved", saved_before)
-    texts = {}
+    texts, frontiers = {}, {}
     for (eid, group, fname, time_on, k, maximize, n_points), row in zip(EXAMPLES, listed):
         f = {"id": eid}
         e = c.post("/api/example", f)
@@ -567,14 +570,15 @@ def section_examples(L, c, args, work):
         svg = c.post("/api/svg", fs)
         boxes, subs = svg.get("svg", "").count('class="task"'), svg.get("svg", "").count('class="sub collapsed"')
         L.check(f"example {eid} draws its diagram", "svg" in svg and boxes == tasks_in(code) > 0 and subs == code.count("@"), describe("/api/svg", {"process": "(the text)", "name": eid}), svg.get("error") or {"boxes": boxes, "tasks": tasks_in(code), "subs": subs, "references": code.count("@")})
-        # the frontier with the settings of the document
+        # the frontier with the settings of the row
         ff = {"process": text, "name": eid, "workers": "1", "limit": "120", "time": "1" if time_on else "0", "max_iter": str(k), "maximize": ",".join(maximize)}
         fr = c.post("/api/frontier", ff, timeout=200)
+        frontiers[eid] = fr
         L.check(f"example {eid} has a frontier of {n_points} points with its settings", fr.get("status") == "complete" and len(fr.get("points", [])) == n_points, describe("/api/frontier", dict(ff, process="(the text)")), fr.get("error") or {"status": fr.get("status"), "points": len(fr.get("points", [])), "seconds": fr.get("seconds")})
         L.check(f"the frontier of {eid} carries the time and the directions of its settings", fr.get("time") is time_on and fr.get("max_iter") == k and fr.get("maximized") == [n in maximize for n in fr.get("names", [])], describe("/api/frontier", dict(ff, process="(the text)")), {key: fr.get(key) for key in ("time", "max_iter", "names", "maximized")})
         if eid in EXAMPLE_POINTS and "points" in fr:
             want = {frac_tuple(p.split()) for p in EXAMPLE_POINTS[eid]}
-            L.check(f"the frontier of {eid} is the one of its document", points_set(fr["points"]) == want, describe("/api/frontier", dict(ff, process="(the text)")), [p["value"] for p in fr["points"]])
+            L.check(f"the frontier of {eid} is the recorded one", points_set(fr["points"]) == want, describe("/api/frontier", dict(ff, process="(the text)")), [p["value"] for p in fr["points"]])
     # the ids that are no example
     for label, f in [("an unknown id", {"id": "no_such_example"}), ("an id that is a path", {"id": "../examples/release.cpi"}), ("an empty id", {"id": "  "}), ("no id", {})]:
         e = c.post("/api/example", f)
@@ -620,12 +624,11 @@ def section_examples(L, c, args, work):
     sid, final = run_to_end(c, fs, L, "the stroke")
     if sid is not None:
         L.check("the live search of the stroke reads the built-in transport", final.get("status") == "complete" and len(final.get("points", [])) == 12 and final.get("names") == ["time", "euro", "disability"], describe("/api/start", dict(fs, process="(the stroke)")), final.get("error") or {"status": final.get("status"), "points": len(final.get("points", [])), "names": final.get("names")})
-        decided = [p for p in final.get("points", []) if p.get("steps")]
-        if decided:
-            decisions = ";".join(".".join(str(n["id"]) for n in st["after"]) + ">" + str(st["take"]["id"]) for st in decided[0]["steps"])
-            fx = {"process": stroke, "name": "stroke", "time": "1", "max_iter": "1", "decisions": decisions}
-            x = c.post("/api/explain", fx, timeout=120)
-            L.check("the explanation of a strategy of the stroke reads the built-in transport", isinstance(x.get("explanations"), list) and len(x["explanations"]) > 0, describe("/api/explain", dict(fx, process="(the stroke)")), clip(x, 300))
+        explained(L, c, "the stroke", stroke, final, {"name": "stroke", "time": "1", "max_iter": "1"})
+    fb2 = {"process": stroke, "name": "stroke", "time": "1"}
+    b2 = c.post("/api/bounds", fb2)
+    L.check("the bounds of the stroke read the built-in transport", b2.get("names") == ["time", "euro", "disability"] and b2.get("lower_exact") is not None and float(Fraction(b2["upper_exact"][1])) > 2500, describe("/api/bounds", dict(fb2, process="(the stroke)")), b2)
+    explained(L, c, "the release", rel, frontiers.get("release", {}), {"name": "release", "time": "0", "max_iter": "2"})
     # an example referred to from a typed text
     f = {"process": "( @coin , (Z, 1, {a: 1}) )"}
     d = c.post("/api/svg", f)
@@ -637,10 +640,39 @@ def section_examples(L, c, args, work):
     r = c.post("/api/save", f)
     L.check("a save closing a cycle through an example is refused", "cycle" in r.get("error", "") and "ok" not in r, describe("/api/save", f), r)
     L.check("the refused save left the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
-    # a saved process named tests shadows the built-in one, until it is deleted
+    # the refusal does not stop at what stands before the reference that closes
+    # the cycle: a name nobody saved, a text that does not parse
+    for label, f in [("an unknown name", {"name": "tests", "process": "@nowhere, @release"}), ("a text that does not parse", {"name": "tests", "process": "(oops @release"})]:
+        r = c.post("/api/save", f)
+        L.check(f"a cycle behind {label} is refused", "cycle" in r.get("error", "") and "release" in r["error"], describe("/api/save", f), r)
+    r = c.post("/api/save", {"name": "broken", "process": "(oops"})
+    f = {"name": "tests", "process": "@broken, @release"}
+    r2 = c.post("/api/save", f)
+    L.check("a cycle behind a saved text that does not parse is refused", r.get("ok") is True and "cycle" in r2.get("error", ""), describe("/api/save", f), [r, r2])
+    c.post("/api/delete", {"name": "broken"})
+    f = {"name": "v", "process": '@"form a cycle"'}
+    r = c.post("/api/save", f)
+    L.check("a name that holds the words of the message is a name like any other", r.get("ok") is True, describe("/api/save", f), r)
+    c.post("/api/delete", {"name": "v"})
+    # a saved process named tests shadows the built-in one, until it is deleted;
+    # a save under the name of an example asks first
     f = {"name": "tests", "process": "(Other, 1, {hours: 1})"}
     r = c.post("/api/save", f)
-    L.check("a process is saved under the name of an example", r == {"ok": True, "name": "tests"}, describe("/api/save", f), r)
+    L.check("a save under the name of an example asks first", r == {"exists": True, "example": True, "name": "tests"}, describe("/api/save", f), r)
+    L.check("the question left the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
+    d = c.post("/api/svg", frel)
+    L.check("the row of the subprocess says it reads the example", [x.get("saved") for x in d.get("subs", [])] == [False], describe("/api/svg", dict(frel, process="(the release)")), d.get("subs"))
+    e = c.post("/api/example", {"id": "release"})
+    L.check("the answer of an example says nothing is shadowed, and how many loops it has", e.get("shadowed") == [] and e.get("loops") == 1, describe("/api/example", {"id": "release"}), {k: e.get(k) for k in ("shadowed", "loops")})
+    e = c.post("/api/example", {"id": "tests"})
+    L.check("a process with no loop says so", e.get("loops") == 0, describe("/api/example", {"id": "tests"}), {k: e.get(k) for k in ("shadowed", "loops")})
+    f = dict(f, overwrite="1")
+    r = c.post("/api/save", f)
+    L.check("with the answer yes it is saved under the name of an example", r == {"ok": True, "name": "tests"}, describe("/api/save", f), r)
+    d = c.post("/api/svg", frel)
+    L.check("the row of the subprocess says it reads the store", [x.get("saved") for x in d.get("subs", [])] == [True], describe("/api/svg", dict(frel, process="(the release)")), d.get("subs"))
+    e = c.post("/api/example", {"id": "release"})
+    L.check("the answer of the release says its tests read the store", e.get("shadowed") == ["tests"] and e.get("process") == texts.get("release"), describe("/api/example", {"id": "release"}), {k: e.get(k) for k in ("shadowed", "loops")})
     d = c.post("/api/svg", frel)
     svg = d.get("svg", "")
     L.check("the saved tests shadows the built-in one in the drawing", ">Other<" in svg and ">Unit<" not in svg and svg.count('class="task"') == 8, describe("/api/svg", dict(frel, process="(the release)")), d.get("error") or {"tasks": svg.count('class="task"'), "Other": ">Other<" in svg, "Unit": ">Unit<" in svg})
@@ -654,6 +686,19 @@ def section_examples(L, c, args, work):
     d = c.post("/api/svg", frel)
     L.check("the built-in tests is back once the saved one is gone", ">Unit<" in d.get("svg", "") and ">Other<" not in d.get("svg", ""), describe("/api/svg", dict(frel, process="(the release)")), d.get("error") or d.get("subs"))
     L.check("the section leaves the store empty", json.loads(c.get("/api/saved")[1]).get("saved") == [], "GET /api/saved", c.get("/api/saved")[1])
+
+
+def explained(L, c, label, text, frontier, fields):
+    """The strategy of the first point that decides something explained, on
+    the text as the page has it."""
+    decided = [p for p in frontier.get("points", []) if p.get("steps")]
+    if not decided:
+        L.check(f"a point of {label} decides something, to explain its strategy", False, f"the frontier of {label}", clip(frontier, 300))
+        return
+    decisions = ";".join(".".join(str(n["id"]) for n in st["after"]) + ">" + str(st["take"]["id"]) for st in decided[0]["steps"])
+    fx = dict(fields, process=text, decisions=decisions)
+    x = c.post("/api/explain", fx, timeout=120)
+    L.check(f"the explanation of a strategy of {label} reads the built-in subprocess", isinstance(x.get("explanations"), list) and len(x["explanations"]) > 0, describe("/api/explain", dict(fx, process=f"({label})")), clip(x, 300))
 
 
 def section_svg(L, c, args):
