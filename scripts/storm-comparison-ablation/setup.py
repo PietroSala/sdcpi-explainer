@@ -16,15 +16,19 @@ look for them. Third, the reference campaign as it was recorded, instances,
 optima, bounds, refinement rounds and results, ships with this repository
 as a split compressed archive: this script reassembles it and unpacks it
 into `default_experiment/`, the folder the stages read when they are run
-with `--replay-experiment` and no value.
+with `--replay-experiment` and no value. With `--bench-only` it stops after
+the two checkouts, which is all the panel of the benchmark on the page of
+`sdcpi serve` needs: the recorded campaign takes 2.4 GB once unpacked.
 
 Usage
 -----
     python setup.py
+    python setup.py --bench-only
 """
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 import tarfile
@@ -108,12 +112,18 @@ def unpack_campaign() -> int:
 
 
 def main() -> int:
+    p = argparse.ArgumentParser(description="Fetch the source benchmark and unpack the recorded campaign.")
+    p.add_argument("--bench-only", action="store_true",
+                   help="fetch the two checkouts of the benchmark and do not unpack the recorded campaign")
+    a = p.parse_args()
     code = fetch_benchmark()
     if code:
         return code
     # the two that follow do not depend on each other: both are tried, and
     # the script fails when either does
     loops = fetch_loops()
+    if a.bench_only:
+        return loops
     return unpack_campaign() or loops
 
 

@@ -112,6 +112,10 @@ loops, each at its pinned commit, and unpacks the recorded campaign:
 python3 scripts/storm-comparison-ablation/setup.py
 ```
 
+With `--bench-only` it fetches the two checkouts and does not unpack the
+recorded campaign, 2.4 GB that only the replay reads: that is all the panel
+of the benchmark on the page of `sdcpi serve` needs.
+
 For the comparison stages, and only for them, install Storm 1.13.0 from
 stormchecker.org so that `storm` is on the PATH.
 
