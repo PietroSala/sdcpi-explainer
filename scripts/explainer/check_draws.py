@@ -4,12 +4,9 @@
     python3 scripts/explainer/check_draws.py [--count N] [--seed S] [--policies P]
                                              [--k 1,2,3] [--verbose]
 
-The theory of the explainer (parallel-paper/semantics-time.tex of the paper
-repository, the names of the entries of a trail in the section on loops and
-the section "A strategy as a function of the draws") rests on statements
-about the decision process of a BPMN+CPI process, the single-step
-one of the paper with the clauses of the loops and the bound K on the
-passes. This file implements that semantics exactly as the tex writes it,
+The explainer rests on statements about the decision process of a BPMN+CPI
+process, the single-step one with the clauses of the loops and the bound K
+on the passes. This file implements that semantics,
 five rules read by rank and witness, the two clauses of a loop, the counts,
 and checks the statements on random processes and random deterministic
 policies, every history of every policy enumerated:

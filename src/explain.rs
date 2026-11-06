@@ -3,9 +3,8 @@
 //!
 //! A strategy is a deterministic policy, and at a choice it decides by a
 //! function of the draws that precede, its own earlier decisions being
-//! determined by those draws (Theorem "A deterministic policy decides by the
-//! draws" of parallel-paper/semantics-time.tex of the paper repository). An
-//! explanation therefore reads the draws and nothing else.
+//! determined by those draws. An explanation therefore reads the draws and
+//! nothing else.
 //!
 //! **A draw is named by its passes.** With loops a draw is taken at one node
 //! once per pass, and a test names the draw it speaks of by the passes it is
@@ -41,9 +40,8 @@
 //! exhaustive and every tree certified); past the budget it goes on
 //! greedily and the explanation says that it is not known to be minimal.
 //!
-//! **The impacts in place of the draws.** The journal paper gives a second
-//! explainer, the current one, which reads at a choice the impacts paid so
-//! far, the time in front when it is in: the cost of the history, what the
+//! **The impacts in place of the draws.** A second explainer, the current
+//! one, reads at a choice the impacts paid so far, the time in front when it is in: the cost of the history, what the
 //! fast forwards paid up to the state the choice is due at. A decision
 //! function of that vector exists exactly when no two histories at which
 //! the strategy decides the choice pay the same and take different regions,
@@ -1260,10 +1258,9 @@ mod tests {
         assert!(explain(&t, &[(vec![1], 5), (vec![1], 7)]).is_err());
     }
 
-    /// The example of the journal: nature pays (2, 1) or (1, 2) before the
-    /// choice, and the strategy decides by which. Either impact alone
-    /// suffices, so the minimal sets are the two of one component, and the
-    /// fewest tests is one.
+    /// Nature pays (2, 1) or (1, 2) before the choice, and the strategy decides
+    /// by which. Either impact alone suffices, so the minimal sets are the two
+    /// of one component, and the fewest tests is one.
     #[test]
     fn the_impacts_are_read_on_the_minimal_sets() {
         // identifiers: A 1, nature 2, B 3, sequence 4, C 5, choice 6, D 7

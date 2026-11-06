@@ -4,7 +4,7 @@ The second test suite of the library, `sdcpi test pareto-frontier`: the
 frontier of the achievable expected impacts, computed by `sdcpi pareto`
 with a strategy per point, against the same frontier computed by the Storm
 model checker with pure schedulers and exact arithmetic, over the grid of
-instances of the journal paper. The library at the root of the repository
+instances of the benchmark. The library at the root of the repository
 knows nothing of this suite; the scripts ask the built library and Storm,
 and everything they generate lands under `experiment/` beside them, which
 is never committed.

@@ -1,7 +1,6 @@
 //! The arithmetic of the search, behind one trait with two implementations.
 //!
-//! `f64` is the arithmetic the recorded runs of the journal paper were produced
-//! with, and stays the default of `determine`: nothing in its code path changes,
+//! `f64` is the default of `determine`: nothing in its code path changes,
 //! the trait being monomorphised away. `Exact` is arithmetic on rationals of
 //! arbitrary precision, for the frontier command, where every comparison with a
 //! budget must be exact and every reported value a rational: the probabilities

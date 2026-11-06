@@ -482,7 +482,7 @@ def build(nested: int, independent: int, process_number: int, dimensions: int,
     # machine. The recorded campaign predates this derivation, its
     # generator having leaned on the hash of the interpreter run that made
     # it, so the grid this stage writes is drawn the same way and is not
-    # that grid; the grid of the paper ships in default_experiment.
+    # that grid; the recorded grid ships in default_experiment.
     digest = hashlib.sha256(
         f"{seed}|{nested}|{independent}|{process_number}|{dimensions}|{mode}".encode()
     ).digest()

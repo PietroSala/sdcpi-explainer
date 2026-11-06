@@ -1,11 +1,8 @@
 # Loops in sdcpi
 
-**Pietro Sala** — Version 0.2
+**Pietro Sala** — Version 0.3
 
-This repository is `sdcpi-loop` with the explainer, and `sdcpi-loop` is
-`sdcpi-parallel` with loops. Everything of the parents holds; this file
-states what the loops add, in the words the code and the note
-`parallel-paper/semantics-time.tex` of the paper repository share.
+This file states what the loops add to the tool, in the words of the code.
 
 ## Grammar
 
@@ -26,7 +23,7 @@ adds one. Identifiers stay in-order: the region first, then the loop node.
 
 ## Semantics
 
-The state of the paper maps every node to its phase; with loops it maps every
+A state without loops maps every node to its phase; with loops it maps every
 node to a phase and a count. The count of a node is the number of times the
 node was closed in the activation under way of the nearest loop above it
 (the whole run, with no loop above): the fast forward and the up clause
@@ -45,7 +42,7 @@ loop node `v` with region `R` and probability `p`:
   the counts of every node strictly under `v`.
 
 The up clause never fires at a loop node, whose closing is its exit. The
-cost and the time are those of the paper: only the fast forward pays. With
+cost and the time do not change: only the fast forward pays. With
 `MAX_ITER` the MDP is finite, every loop making at most `MAX_ITER` passes
 per activation and an inner loop at most `MAX_ITER` passes per pass of the
 loop above it. `MAX_ITER = inf` is the process with its loops unbounded,
@@ -63,7 +60,7 @@ having one successor.
 
 ## The bounds
 
-The recursion of the paper gets one case, at a loop node `v`, region `R`,
+The recursion of the bounds gets one case, at a loop node `v`, region `R`,
 probability `p`, for `U` and `L` alike and for every component, the time
 included (the passes run one after the other):
 
@@ -115,9 +112,8 @@ that everything else goes as in the strategy. Under a loop in a parallel
 branch that is not so, the passes past the bound moving in time the draws
 and the choices of the other branch: a strategy may then have no
 continuation at all, and the old interval was the interval of no policy.
-The tag `continued-denied-passes` is that version. The note of the paper
-keeps the narrower interval as a statement on the strategies that do
-continue, and says when they do.
+The tag `continued-denied-passes` is that version. The narrower interval
+remains a statement on the strategies that do continue.
 
 For a frontier accepted before it closed, an apex, an open history of
 probability `P`, with `S` and cost `C`, counts for `P · S · (C + [L∞_s,

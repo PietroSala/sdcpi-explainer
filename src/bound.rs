@@ -25,11 +25,10 @@
 //! non-negative numbers being at most their sum, and the lower bound the
 //! greater of the two lower bounds, the greater of two numbers being at least
 //! each of them. The sequence, the choice and the nature cases are the ones of
-//! the impacts. The proof is in parallel-paper/semantics-time.tex of the paper
-//! repository.
+//! the impacts.
 //!
 //! The arithmetic is the one of the type parameter, see `num.rs`: the
-//! floating-point runs of the paper and the exact runs of the frontier take the
+//! floating-point runs and the exact runs of the frontier take the
 //! same traversal.
 
 use std::sync::atomic::{AtomicBool, Ordering};

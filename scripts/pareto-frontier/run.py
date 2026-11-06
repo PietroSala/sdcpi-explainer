@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The frontier campaign: sdcpi pareto against Storm over the journal grid.
+"""The frontier campaign: sdcpi pareto against Storm over the grid of the benchmark.
 
     run.py                                  the campaign, round after round
     run.py --max-diagonal 3 --limit 4       a taste, four instances
     run.py --round 2 --rounds 1             one round, the timed-out runs again
 
-Every instance of the grid of the journal paper is regenerated from the
+Every instance of the grid of the benchmark is regenerated from the
 stable seed of stage 1 of storm-comparison-ablation, nothing is copied,
 and asked for the frontier of all its expected impacts five times: once
 by Storm on one core, and four times by sdcpi pareto in one phase, at
@@ -94,7 +94,7 @@ LIBRARIES = ["biodivine", "oxidd"]
 # frontier in one phase, the four ablations of the two early tests crossed with
 # the four counts of workers, `onephase-<ablation>-w<workers>`. The ablation
 # with both tests on comes first, so that a cut at any moment leaves the
-# configuration the paper reports. The two tests are independent: with the
+# configuration with both. The two tests are independent: with the
 # accept off a budget is recorded only at a closed node, so every apex written
 # is the payment of a whole strategy and none is ever superseded; with the
 # reject off the test that closes a node is made on the impact accumulated for

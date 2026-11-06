@@ -1252,7 +1252,7 @@ def step_examples(S, page, ctx):
     }""")
     S.check("every end of every interval has three decimals at most and encloses the exact one by less than a thousandth", wrong == [], f"{wrong[:3]}")
     point = page.evaluate("() => { const b = LAST.points.findIndex(p => p.value.join() === '1149/40,1562'); select(b); return b; }")
-    S.check("the point the paper shows is among them", point >= 0, f"{point}")
+    S.check("the point 1149/40, 1562 is among them", point >= 0, f"{point}")
     line = page.evaluate("() => [...document.querySelectorAll('#str div')].find(d => d.textContent.startsWith('with the loops unbounded')).textContent")
     S.check("its line reads rounded outward, an exact number as it is", "euro + 3.333 to + 129.334" in line and "+ 1.375" in line, f"{line!r}",
             repro="choose the point of value 1149/40, 1562 of the release and read the strategy")

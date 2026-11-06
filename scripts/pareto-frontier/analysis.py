@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The figures, the tables and the numbers of the experiments section.
 
-    analysis.py                       everything, into the paper data folder
+    analysis.py                       everything, into experiment/analysis
     analysis.py --out /tmp/x          somewhere else
     analysis.py --baseline onephase-both-w2
 
@@ -289,8 +289,8 @@ class Scan:
 def scan(results: Path, baseline: str, max_diagonal: int | None = None,
          storm_max_diagonal: int | None = None) -> Scan:
     """One pass over every instance folder, up to a diagonal when one is given:
-    the campaign sweeps on past the diagonals the paper declares, and the
-    records it writes there stay out of the numbers."""
+    the campaign sweeps on past the diagonals asked for, and the records it
+    writes there stay out of the numbers."""
     s = Scan()
     for folder in sorted(os.scandir(results), key=lambda e: e.name):
         if not folder.is_dir():
@@ -720,15 +720,13 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--results", type=Path, default=here / "experiment" / "results")
-    p.add_argument("--out", type=Path,
-                   default=Path.home() / "Documents" / "github" / "cpi-semantics-mdp"
-                   / "parallel-paper" / "data")
+    p.add_argument("--out", type=Path, default=here / "experiment" / "analysis")
     p.add_argument("--baseline", default=TOOL_PREFIX + "both-w1",
                    help="the configuration compared with Storm")
     p.add_argument("--steps", type=int, default=24,
                    help="the instants of the mean anytime curve")
     p.add_argument("--max-diagonal", type=int, default=None,
-                   help="the last diagonal the paper declares; the records beyond it stay out")
+                   help="the last diagonal read; the records beyond it stay out")
     p.add_argument("--storm-max-diagonal", type=int, default=None,
                    help="the last diagonal Storm has swept entire; its records beyond it stay out")
     a = p.parse_args()

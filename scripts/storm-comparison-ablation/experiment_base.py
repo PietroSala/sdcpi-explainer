@@ -6,7 +6,7 @@ experiment there from nothing. With `--replay-experiment` the base is a
 recorded experiment instead: `--replay-experiment <dir>` names a folder
 structured like this one (`bpmn-cpi-benchmarks/`, `benchmarks-optima/`,
 `benchmarks-refinements/`, and so on), and `--replay-experiment` alone
-names `default_experiment/`, the campaign of the paper as it was recorded,
+names `default_experiment/`, the campaign as it was recorded,
 unpacked beside the scripts by `setup.py`. The flag is read and removed
 here, before a script parses its own arguments, and the answer is cached
 so every module of one run agrees on the base.

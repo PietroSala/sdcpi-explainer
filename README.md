@@ -1,6 +1,6 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.8
+**Pietro Sala** — Version 0.9
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
@@ -176,15 +176,11 @@ tasks.
 
 ## Explaining a strategy
 
-This repository is the third of the family, after the tool of the paper and
-the one with loops, and what it adds is the explainer. A strategy is a
-deterministic policy, and at a choice it decides by a function of the draws
-of nature that precede, its own earlier decisions being determined by
-those draws: the section "A strategy as a function of the draws" of
-`parallel-paper/semantics-time.tex`, in the repository of the paper, proves
-it, and `scripts/explainer/check_draws.py` checks every statement of it on
-an independent implementation of the semantics. An explanation therefore
-reads the draws and nothing else.
+A strategy is a deterministic policy, and at a choice it decides by a
+function of the draws of nature that precede, its own earlier decisions
+being determined by those draws: `scripts/explainer/check_draws.py` checks
+this on an independent implementation of the semantics. An explanation
+therefore reads the draws and nothing else.
 
     sdcpi explain F.yaml --B 7.6,70.8,16.8 --time 1
     sdcpi pareto  F.yaml --onephase 1 --time 1 --explain 1 --json out.json
@@ -259,11 +255,11 @@ and its value stays under the upper end of `continued`.
 The explanation does not always take, past the bound, what the strategy
 would take there: under a loop in a parallel branch the passes past the
 bound move the draws of the other branch in time, and a tree that reads one
-of them may take another branch. The note of the paper says when it does
-continue the strategy; the tool does not rely on it.
+of them may take another branch. The tool does not rely on its continuing
+the strategy.
 
-**The impacts in place of the draws.** The journal paper gives a second
-explainer, which reads at a choice what the run has paid so far: the cost
+**The impacts in place of the draws.** A second explainer reads at a
+choice what the run has paid so far: the cost
 of the history at the state where the choice is due, the time elapsed in
 front when the expected time is in, then the impacts of the tasks closed.
 A function of that vector exists only when no two histories at which the

@@ -30,7 +30,7 @@ are the engine and the model agreeing, a mismatch is a defect in one of
 the two, and an unchecked run says nothing. The exit code counts the
 mismatches and the unchecked runs.
 
-The time is the component zero by default, `--time 1`, as the paper has it;
+The time is the component zero by default, `--time 1`;
 `--time 0` compares the impacts alone. A component that is zero on every
 task is dropped from the question put to Storm, which aborts on a reward
 structure that is identically zero, and the two frontiers are compared on

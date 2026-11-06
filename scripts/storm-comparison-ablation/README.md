@@ -23,7 +23,7 @@ Every stage accepts `--replay-experiment`, which moves its data root:
 `--replay-experiment <dir>` names any folder structured like this one
 (`bpmn-cpi-benchmarks/`, `benchmarks-optima/`, `benchmarks-bounds/`,
 `benchmarks-refinements/`, `results.json`), and `--replay-experiment`
-alone names `default_experiment/`, the campaign of the paper as it was
+alone names `default_experiment/`, the campaign as it was
 recorded, which `setup.py` unpacks from the split archive shipped in
 `default_experiment_archive/`. So
 

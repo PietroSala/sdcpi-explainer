@@ -1,10 +1,9 @@
 //! `sdcpi serve`: one page on localhost, a mask over the command line.
 //!
-//! The artifact of a tool paper has to run on the virtual machine the
-//! evaluation provides or inside a container, so an installer buys nothing
-//! and a page the binary serves itself buys everything: the user installs
-//! nothing that is not already there, the three desktop systems come for
-//! free, and a container needs one port.
+//! The tool has to run on a virtual machine or inside a container, so an
+//! installer buys nothing and a page the binary serves itself buys everything:
+//! the user installs nothing that is not already there, the three desktop
+//! systems come for free, and a container needs one port.
 //!
 //! The server is written here rather than taken from a crate. It answers on
 //! the loopback address, serves one page held as a constant and a few
