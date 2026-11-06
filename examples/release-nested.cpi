@@ -1,6 +1,5 @@
-# The software release of the thesis, the third scenario of its motivation
-# chapter, an outer loop over the rounds of review: the finding; the fix decided
-# after it; the tests run again, a loop inside the loop.
+# A software release with nested loops, an outer loop over the rounds of review: the
+# finding; the fix decided after it; the tests run again, a loop inside the loop.
 (0.25 (Review, 1, {hours: 4}),
       ( ( (Major, 1, {hours: 6}), ( (HouseMajor, 1, {hours: 24}) ^ (VendorMajor, 3, {euro: 2000, hours: 2}) ) )
         ^[0.4]

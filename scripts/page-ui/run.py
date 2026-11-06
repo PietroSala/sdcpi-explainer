@@ -1145,7 +1145,7 @@ def step_more(S, page, ctx):
 
 
 def step_examples(S, page, ctx):
-    """The panel of the examples: the two lists, the release loaded with its
+    """The panel of the examples: the list, the release loaded with its
     settings and computed, the winery with its direction, the settings of
     one example taking the place of those of the one before, and what a load
     does to what stands on the page when it comes."""
@@ -1180,15 +1180,14 @@ def step_examples(S, page, ctx):
     S.check("the panel Examples sits between the saved processes and the benchmark", order == ["savedpanel", "examples", "bench"], f"{order}")
     S.check("the panel is always shown and its summary reads Examples",
             page.evaluate("() => !document.getElementById('examples').hidden") and text_of(page, "#examples > summary") == "Examples")
-    heads = page.evaluate("() => [...document.querySelectorAll('#examples .exhead')].map(h => h.textContent)")
-    S.check("the two lists are headed by the paper and by the thesis",
-            heads == ["The paper: Explaining Strategies for Expected Impacts", "The thesis: Synthesizing Strategies for Quantitative Processes"], f"{heads}")
     S.check("the rows of the panel come", holds(page, "() => document.querySelectorAll('#examples li').length > 0"))
-    rows = page.evaluate("() => ['ex-paper', 'ex-thesis'].map(id => [...document.querySelectorAll('#' + id + ' li')].map(li => [li.querySelector('button').dataset.example, li.querySelector('button').textContent, li.querySelector('b').textContent, ...[...li.querySelectorAll('.hint')].map(x => x.textContent)]))")
-    want = [[[e["id"], "Load", e["title"], e["source"], e["note"]] for e in listed if e["group"] == g] for g in ("paper", "thesis")]
-    S.check("every example of the server has a row under its document: a Load button, the title, the source and the note",
-            rows == want and len(rows[0]) == 3 and len(rows[1]) == 7, f"{[[r[0] for r in g] for g in rows]}",
-            repro="GET /api/examples against the rows of #ex-paper and #ex-thesis")
+    panel = text_of(page, "#examples") or ""
+    S.check("the panel names neither a paper nor a thesis", not re.search(r"\b(paper|thesis)\b", panel, re.I), panel[:300])
+    rows = page.evaluate("() => [...document.querySelectorAll('#ex-list li')].map(li => [li.querySelector('button').dataset.example, li.querySelector('button').textContent, li.querySelector('b').textContent, ...[...li.querySelectorAll('.hint')].map(x => x.textContent)])")
+    want = [[e["id"], "Load", e["title"], e["note"]] for e in listed]
+    S.check("every example of the server has a row: a Load button, the title and the note",
+            rows == want and len(rows) == 10, f"{[r[0] for r in rows]}",
+            repro="GET /api/examples against the rows of #ex-list")
     S.check("the panel says what a load leaves as it is", "stay as they are" in (text_of(page, "#examples") or ""))
     reveal(page, "#examples summary"); page.click("#examples summary")
     S.shot("examples-panel")

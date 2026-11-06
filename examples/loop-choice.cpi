@@ -1,4 +1,3 @@
-# The loop over a choice of the chapter on time and loops of the thesis: a
-# loop of probability 1/2 over the choice between A, one hour, and B, two
-# hours, the impacts in hours of work and in euro, read at max iterations 2.
+# The loop over a choice: a loop of probability 1/2 over the choice between A, one hour,
+# and B, two hours, the impacts in hours of work and in euro, read at max iterations 2.
 (0.5 ( (A, 1, {hours: 1, euro: 10}) ^ (B, 2, {hours: 2, euro: 4}) ))

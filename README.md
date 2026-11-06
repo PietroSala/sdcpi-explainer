@@ -1,11 +1,11 @@
 # strategy-determination-bpmn-cpi
 
-**Pietro Sala** — Version 0.7
+**Pietro Sala** — Version 0.8
 
 The command-line tool `sdcpi`, Strategy Determination for BPMN+CPI,
 lives at the root of this repository and is documented below on its own
-terms; `examples/` holds two instances to explore it with, and the
-processes of the paper and of the thesis, listed under Examples below.
+terms; `examples/` holds two instances to explore it with, and a few small
+processes to try it on, listed under Examples below.
 `scripts/storm-comparison-ablation/` holds its test suite: a large
 differential campaign that confronts the tool with the Storm model
 checker and with three ablated configurations of its own search,
@@ -46,8 +46,8 @@ a column "loops" of its own. The panel
 that loads a process of the benchmark has a switch "Loops", shown when the
 server has the grid with loops (`--bench-loops DIR`, see `LOOPS.md`): the
 same coordinates then come from the benchmark with loops. The panel
-"Examples", between the saved processes and the benchmark, lists the
-processes of the paper and of the thesis and loads one with one click: the
+"Examples", between the saved processes and the benchmark, lists a few small
+processes and loads one with one click: the
 expected time, the max iterations and the directions it is read with are
 set; the bounds on the expected values and the tolerances go back to their
 start; the time limit, the workers and the early tests stay as they are. See
@@ -132,31 +132,30 @@ long, and the two bounds shown beside the process have twenty seconds.
 
 ## Examples
 
-`examples/` holds the processes of the paper "Explaining Strategies for
-Expected Impacts" and of the PhD thesis "Synthesizing Strategies for
-Quantitative Processes", each a file in the grammar of `parse` that opens
-with a comment saying what it is and where it appears. They are built into
+`examples/` holds a few small processes that read as real ones, something to
+try the tool on beside the synthetic benchmarks, each a file in the grammar of
+`parse` that opens with a comment saying what it is. They are built into
 the binary too: the page lists them in its panel "Examples" and loads one
 with the settings it is read with, which are the options of the command
 line: `--time 1` for the expected time; `--max-iter K` for the max
 iterations; `--maximize` for the components maximized.
 
-| example | file | where it appears | expected time | max iterations | maximized | frontier |
+| example | file | what it shows | expected time | max iterations | maximized | frontier |
 |---|---|---|---|---|---|---|
-| `release` | `release.cpi` | the paper, the running example | off | 2 | | 1937 points |
-| `tests` | `tests.cpi` | the paper, the running example, the subprocess of the release | off | 2 | | 2 points |
-| `coin` | `coin.cpi` | the paper, the section on the explanations on the cost | off | 1 | | 3 points |
-| `winery` | `winery.cpi` | the thesis, the motivation chapter, first scenario | off | 1 | `points` | 7 points |
-| `stroke` | `stroke.cpi` | the thesis, the motivation chapter, second scenario | on | 1 | | 12 points |
-| `transport` | `transport.cpi` | the thesis, the subprocess of the stroke | on | 1 | | 2 points |
-| `release-nested` | `release-nested.cpi` | the thesis, the motivation chapter, third scenario | on | 2 | | 1024 points |
-| `line` | `line-thesis.cpi` | the thesis, the chapter on the semantics, the running example | off | 1 | | 4 points |
-| `quantile` | `quantile.cpi` | the thesis, the section on the quantile queries | off | 1 | | 1 point |
-| `loop-choice` | `loop-choice.cpi` | the thesis, the chapter on time and loops, which computes it at three passes, 8 points | off | 2 | | 4 points |
+| `release` | `release.cpi` | a loop, a choice and a subprocess | off | 2 | | 1937 points |
+| `tests` | `tests.cpi` | the subprocess of the release | off | 2 | | 2 points |
+| `coin` | `coin.cpi` | a strategy with no explanation on the cost | off | 1 | | 3 points |
+| `winery` | `winery.cpi` | two currencies in opposite directions | off | 1 | `points` | 7 points |
+| `stroke` | `stroke.cpi` | the expected time and a subprocess used twice | on | 1 | | 12 points |
+| `transport` | `transport.cpi` | the subprocess of the stroke | on | 1 | | 2 points |
+| `release-nested` | `release-nested.cpi` | a loop inside a loop | on | 2 | | 1024 points |
+| `line` | `metal-line.cpi` | a choice that may read a draw | off | 1 | | 4 points |
+| `quantile` | `quantile.cpi` | the expected impact against a quantile query | off | 1 | | 1 point |
+| `loop-choice` | `loop-choice.cpi` | one decision per pass of a loop, 8 points at three passes | off | 2 | | 4 points |
 
 The release refers to its tests as `@tests` and the stroke to its transport
 as `@transport`. `examples/store.json` holds the two subprocesses in the
-shape of the store of the page, so the release of the paper is built and
+shape of the store of the page, so the release is built and
 computed from the command line by
 
 ```sh
@@ -170,7 +169,7 @@ read among the examples, so the release and the stroke draw with nothing
 saved, and a process saved under the name of an example takes its place: the
 page asks first, and the row of the subprocess and the line of the load say
 which of the two a reference reads.
-`line-thesis.cpi` is the metal line as the thesis writes it, nine tasks,
+`metal-line.cpi` is the metal line with nine tasks,
 its sequences nested to the right and a choice between two paintings at
 its end; `line.cpi`, used further down, is a miniature of it with eight
 tasks.

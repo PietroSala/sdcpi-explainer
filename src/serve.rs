@@ -31,7 +31,7 @@
 //!   * the search is given a time limit that the page cannot remove, because
 //!     a search with no limit does not have to terminate;
 //!   * no path from a request ever reaches the file system: the page is a
-//!     constant, the examples of the paper and of the thesis are constants,
+//!     constant, the examples are constants,
 //!     and the process is parsed by the parser of the crate. The one
 //!     thing read from disk is an instance of the benchmark, addressed by
 //!     four numbers and a mode that are checked against the grid before a
@@ -512,18 +512,16 @@ fn settings_json(e: &crate::examples::Example) -> String {
     )
 }
 
-/// The examples of the paper and of the thesis as the panel lists them:
+/// The examples as the panel lists them:
 /// everything but the text, which the page asks for when one is loaded.
 fn examples_list() -> String {
     let items: Vec<String> = crate::examples::EXAMPLES
         .iter()
         .map(|e| {
             format!(
-                "{{\"id\": {}, \"group\": {}, \"title\": {}, \"source\": {}, \"note\": {}, {}}}",
+                "{{\"id\": {}, \"title\": {}, \"note\": {}, {}}}",
                 esc(e.id),
-                esc(e.group),
                 esc(e.title),
-                esc(e.source),
                 esc(e.note),
                 settings_json(e)
             )

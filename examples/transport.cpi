@@ -1,4 +1,4 @@
-# The transport of the stroke pathway, the subprocess the stroke of the thesis
-# refers to as @transport: the helicopter, or the ambulance and then the road
-# chosen after the draw of the jam.
+# The transport of the stroke pathway, the subprocess the stroke refers to as
+# @transport: the helicopter, or the ambulance and then the road chosen after the draw of
+# the jam.
 ( (Heli, 15, {euro: 2500}) ^ ( (Ambulance, 5, {euro: 50}), ( ( (Ring_jammed, 40, {euro: 100}) ^ (Streets, 25, {euro: 100}) ) ^[0.3] ( (Ring_clear, 15, {euro: 100}) ^ (Streets, 25, {euro: 100}) ) ) ) )

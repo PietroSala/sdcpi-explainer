@@ -1,4 +1,4 @@
-# The tests of the release, the subprocess the release of the paper refers to
-# as @tests, in the running example: the unit tests, then a draw of nature
-# between the signoff and a choice between a patch and a refactoring.
+# The tests of the release, the subprocess the release refers to as @tests: the unit
+# tests, then a draw of nature between the signoff and a choice between a patch and a
+# refactoring.
 ( (Unit, 1, {hours: 2, euro: 40}), ( (Signoff, 1, {hours: 1}) ^[0.7] ( (Patch, 1, {hours: 4, euro: 40}) ^ (Refactor, 2, {hours: 12}) ) ) )

@@ -1,8 +1,7 @@
-//! The examples of the paper and of the thesis, built into the binary.
+//! The examples, built into the binary.
 //!
-//! Every example is a process one of the two documents works on: the paper
-//! "Explaining Strategies for Expected Impacts" and the PhD thesis
-//! "Synthesizing Strategies for Quantitative Processes". Its text is a file
+//! Every example is a small process that reads as a real one, something to try
+//! the tool on beside the synthetic benchmarks. Its text is a file
 //! under `examples/`, embedded here, and beside it the manifest keeps the
 //! settings it is read with: whether the expected time is a component of the
 //! frontier; the max iterations; the components to maximize. The page lists
@@ -16,16 +15,12 @@
 //! store. On the command line the same two subprocesses are the entries of
 //! `examples/store.json`, for `sdcpi parse --saved`.
 
-/// One example: a process of a document, with the settings it is read with.
+/// One example: a process, with the settings it is read with.
 pub struct Example {
     /// The name the example is loaded under, and the name a reference to it
     /// is written with.
     pub id: &'static str,
-    /// The document it comes from, `paper` or `thesis`.
-    pub group: &'static str,
     pub title: &'static str,
-    /// Where it appears in its document, in words.
-    pub source: &'static str,
     /// What it shows, in one sentence.
     pub note: &'static str,
     /// The process, in the grammar of `parse`.
@@ -40,13 +35,11 @@ pub struct Example {
     pub maximize: &'static [&'static str],
 }
 
-/// The examples, the paper first, each document in the order it meets them.
+/// The examples, in the order the panel lists them.
 pub const EXAMPLES: &[Example] = &[
     Example {
         id: "release",
-        group: "paper",
         title: "The software release",
-        source: "The running example",
         note: "A loop over the rounds of review, a choice of the fix and the tests as a subprocess: with max iterations 2 the frontier has 1937 points.",
         text: include_str!("../examples/release.cpi"),
         time: false,
@@ -55,9 +48,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "tests",
-        group: "paper",
         title: "The tests of the release",
-        source: "The running example, the subprocess of the release",
         note: "The subprocess the release refers to as @tests: the unit tests, then a draw of nature between the signoff and a choice between a patch and a refactoring.",
         text: include_str!("../examples/tests.cpi"),
         time: false,
@@ -66,9 +57,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "coin",
-        group: "paper",
         title: "The coin",
-        source: "The section on the explanations on the cost",
         note: "A strategy with no explanation on the cost: of the three points, (6, 6) is reached only by deciding on the draw, after two histories that paid the same.",
         text: include_str!("../examples/coin.cpi"),
         time: false,
@@ -77,9 +66,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "winery",
-        group: "thesis",
         title: "The winery",
-        source: "The motivation chapter, first scenario",
         note: "Two currencies in opposite directions, the euro kept low and the points kept high: a frontier of seven points.",
         text: include_str!("../examples/winery.cpi"),
         time: false,
@@ -88,9 +75,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "stroke",
-        group: "thesis",
         title: "The stroke pathway",
-        source: "The motivation chapter, second scenario",
         note: "The expected time as a component and the transport as a subprocess used twice: a frontier of twelve points.",
         text: include_str!("../examples/stroke.cpi"),
         time: true,
@@ -99,9 +84,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "transport",
-        group: "thesis",
         title: "The transport of the stroke",
-        source: "The motivation chapter, the subprocess of the stroke pathway",
         note: "The subprocess the stroke refers to as @transport: the helicopter, or the ambulance and then the road chosen after the draw of the jam.",
         text: include_str!("../examples/transport.cpi"),
         time: true,
@@ -110,9 +93,7 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "release-nested",
-        group: "thesis",
-        title: "The software release of the thesis",
-        source: "The motivation chapter, third scenario",
+        title: "A software release with nested loops",
         note: "A loop inside a loop and strategies too large to read: with max iterations 2 and the expected time the frontier has 1024 points.",
         text: include_str!("../examples/release-nested.cpi"),
         time: true,
@@ -121,20 +102,16 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "line",
-        group: "thesis",
         title: "The metal line",
-        source: "The chapter on the semantics, the running example",
-        note: "The process the semantics is defined on, a draw of nature beside a choice and then a choice that may read the draw: a frontier of four points.",
-        text: include_str!("../examples/line-thesis.cpi"),
+        note: "A draw of nature beside a choice, and then a choice that may read the draw: a frontier of four points.",
+        text: include_str!("../examples/metal-line.cpi"),
         time: false,
         max_iter: 1,
         maximize: &[],
     },
     Example {
         id: "quantile",
-        group: "thesis",
         title: "The quantile example",
-        source: "The section on the quantile queries",
         note: "A choice between two draws of nature on which the expected impact and a quantile query disagree: the frontier is the one point (2, 2.5), the draw between T3 and T4.",
         text: include_str!("../examples/quantile.cpi"),
         time: false,
@@ -143,10 +120,8 @@ pub const EXAMPLES: &[Example] = &[
     },
     Example {
         id: "loop-choice",
-        group: "thesis",
         title: "The loop over a choice",
-        source: "The chapter on time and loops",
-        note: "One decision per pass of the loop: with max iterations 2 the frontier has four points, one per word of two decisions; the chapter computes it at three passes, where it has eight.",
+        note: "One decision per pass of the loop: with max iterations 2 the frontier has four points, one per word of two decisions; at three it has eight.",
         text: include_str!("../examples/loop-choice.cpi"),
         time: false,
         max_iter: 2,
@@ -180,7 +155,6 @@ mod tests {
                 "{:?} is no name a reference can write bare",
                 e.id
             );
-            assert!(e.group == "paper" || e.group == "thesis", "{} has the group {:?}", e.id, e.group);
         }
     }
 
@@ -189,7 +163,7 @@ mod tests {
         for e in EXAMPLES {
             let comment = e.text.lines().take_while(|l| l.starts_with('#')).count();
             assert!((1..=3).contains(&comment), "{} opens with {comment} lines of comment", e.id);
-            assert!(!e.title.is_empty() && !e.source.is_empty() && !e.note.is_empty(), "{}", e.id);
+            assert!(!e.title.is_empty() && !e.note.is_empty(), "{}", e.id);
             assert!(e.max_iter >= 1, "{}", e.id);
         }
     }

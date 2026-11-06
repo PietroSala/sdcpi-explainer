@@ -25,8 +25,8 @@ What is checked, route by route:
               another; the keys out of the grid, the bad numbers, a missing
               field and an unknown mode refused with an error. Only keys on
               disk are asked for, so that the generator never writes.
-  examples    the list of the panel "Examples", the ten processes of the
-              paper and of the thesis with their group and their settings,
+  examples    the list of the panel "Examples", the ten processes with their
+              settings, naming neither a paper nor a thesis,
               typed, and no text in it; every example by its id, its text
               the file under `examples/`, drawing its diagram and giving,
               with its settings, the frontier it then has, 1937 points for
@@ -147,21 +147,19 @@ TEXT_SLOW = """( ( ( (T1, 2, {impact0: 0.954507, impact1: 0.059873, impact2: 0.7
        ^[0.728244] (T21, 3, {impact0: 0.426879, impact1: 0.394883, impact2: 0.790622, impact3: 0.756004, impact4: 0.406662}) ) ) )"""
 
 # the examples of the panel, as the list of the page must give them: the id;
-# the group; the file of the text under examples/; the three settings; the
-# number of points of the frontier computed with them, stated by the thesis
-# for the winery, the stroke and its release, by the paper for the coin and
-# recorded in the data of the paper for the release
+# the file of the text under examples/; the three settings; the number of
+# points of the frontier computed with them
 EXAMPLES = [
-    ("release", "paper", "release.cpi", False, 2, [], 1937),
-    ("tests", "paper", "tests.cpi", False, 2, [], 2),
-    ("coin", "paper", "coin.cpi", False, 1, [], 3),
-    ("winery", "thesis", "winery.cpi", False, 1, ["points"], 7),
-    ("stroke", "thesis", "stroke.cpi", True, 1, [], 12),
-    ("transport", "thesis", "transport.cpi", True, 1, [], 2),
-    ("release-nested", "thesis", "release-nested.cpi", True, 2, [], 1024),
-    ("line", "thesis", "line-thesis.cpi", False, 1, [], 4),
-    ("quantile", "thesis", "quantile.cpi", False, 1, [], 1),
-    ("loop-choice", "thesis", "loop-choice.cpi", False, 2, [], 4),
+    ("release", "release.cpi", False, 2, [], 1937),
+    ("tests", "tests.cpi", False, 2, [], 2),
+    ("coin", "coin.cpi", False, 1, [], 3),
+    ("winery", "winery.cpi", False, 1, ["points"], 7),
+    ("stroke", "stroke.cpi", True, 1, [], 12),
+    ("transport", "transport.cpi", True, 1, [], 2),
+    ("release-nested", "release-nested.cpi", True, 2, [], 1024),
+    ("line", "metal-line.cpi", False, 1, [], 4),
+    ("quantile", "quantile.cpi", False, 1, [], 1),
+    ("loop-choice", "loop-choice.cpi", False, 2, [], 4),
 ]
 
 # the points of the small frontiers, in the order of the names of the answer
@@ -547,18 +545,18 @@ def section_examples(L, c, args, work):
     listed = d.get("examples") if isinstance(d, dict) else None
     if not L.check("the list is a JSON object with an examples array", status == 200 and isinstance(listed, list), "GET /api/examples", f"{status} {clip(text, 300)}"):
         return
-    L.check("the list holds the ten examples in the order of the documents", [e.get("id") for e in listed] == [x[0] for x in EXAMPLES], "GET /api/examples", [e.get("id") for e in listed])
-    L.check("the paper comes first, then the thesis", [e.get("group") for e in listed] == [x[1] for x in EXAMPLES], "GET /api/examples", [e.get("group") for e in listed])
-    L.check("every example has a title, a source and a note", all(isinstance(e.get(k), str) and e[k].strip() for e in listed for k in ("title", "source", "note")), "GET /api/examples", clip(listed, 400))
+    L.check("the list holds the ten examples in their order", [e.get("id") for e in listed] == [x[0] for x in EXAMPLES], "GET /api/examples", [e.get("id") for e in listed])
+    L.check("every example has a title and a note", all(isinstance(e.get(k), str) and e[k].strip() for e in listed for k in ("title", "note")), "GET /api/examples", [sorted(e) for e in listed][:2])
+    L.check("the list names neither a paper nor a thesis", not re.search(r"\b(paper|thesis)\b", text, re.I) and all("group" not in e and "source" not in e for e in listed), "GET /api/examples", clip(text, 300))
     L.check("the list carries no text", all("process" not in e and "text" not in e for e in listed), "GET /api/examples", [sorted(e) for e in listed][:2])
     typed = lambda e: (isinstance(e.get("time"), bool) and isinstance(e.get("max_iter"), int) and not isinstance(e.get("max_iter"), bool) and e["max_iter"] >= 1
                        and isinstance(e.get("maximize"), list) and all(isinstance(n, str) for n in e["maximize"]))
     L.check("the settings of the list are present and typed", all(typed(e) for e in listed), "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
-    L.check("the settings of the list are the recorded ones", [(e.get("time"), e.get("max_iter"), e.get("maximize")) for e in listed] == [(x[3], x[4], x[5]) for x in EXAMPLES], "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
+    L.check("the settings of the list are the recorded ones", [(e.get("time"), e.get("max_iter"), e.get("maximize")) for e in listed] == [(x[2], x[3], x[4]) for x in EXAMPLES], "GET /api/examples", [{k: e.get(k) for k in ("id", "time", "max_iter", "maximize")} for e in listed])
     saved_before = json.loads(c.get("/api/saved")[1]).get("saved")
     L.check("the store is empty while the examples are read", saved_before == [], "GET /api/saved", saved_before)
     texts, frontiers = {}, {}
-    for (eid, group, fname, time_on, k, maximize, n_points), row in zip(EXAMPLES, listed):
+    for (eid, fname, time_on, k, maximize, n_points), row in zip(EXAMPLES, listed):
         f = {"id": eid}
         e = c.post("/api/example", f)
         ok = e.get("name") == eid and isinstance(e.get("process"), str) and e["process"].strip() != ""
@@ -567,6 +565,7 @@ def section_examples(L, c, args, work):
         text = e["process"]
         texts[eid] = text
         L.check(f"example {eid} carries its settings, typed, as the list has them", typed(e) and all(e.get(key) == row.get(key) for key in ("time", "max_iter", "maximize")), describe("/api/example", f), {key: e.get(key) for key in ("time", "max_iter", "maximize")})
+        L.check(f"example {eid} names neither a paper nor a thesis", not re.search(r"\b(paper|thesis)\b", text, re.I), describe("/api/example", f), text[:200])
         L.check(f"example {eid} opens with a comment of one to three lines", 1 <= len([1 for line in text.splitlines()[:4] if line.startswith("#")]) <= 3 and text.startswith("#"), describe("/api/example", f), text[:200])
         path = os.path.join(EXAMPLES_DIR, fname)
         if os.path.isfile(path):

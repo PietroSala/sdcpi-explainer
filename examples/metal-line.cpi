@@ -1,6 +1,5 @@
-# The metal line, the running example of the chapter on the semantics of the
-# thesis, the term phi_0 with its nine tasks: the sequences are bracketed to
-# the right as the term brackets them, the energy in kwh and the work in hours.
+# The metal line, with its nine tasks: the sequences are bracketed to the right, the
+# energy in kwh and the work in hours.
 (Cut, 1, {kwh: 10, hours: 1}),
 ( ( ( (Bend, 1, {kwh: 20, hours: 1}), ( (HPol, 2, {kwh: 5, hours: 4}) ^[0.2] (LPol, 1, {kwh: 8, hours: 1}) ) )
     ||
